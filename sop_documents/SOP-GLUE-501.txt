@@ -1,0 +1,84 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-GLUE-501
+Service  : AWS Glue (ETL Jobs)
+Error    : Glue Job Failure (FAILED / TIMEOUT / ERROR)
+Risk     : LOW
+Auto-Fix : YES (for transient errors)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers recovery for AWS Glue ETL job failures. Glue jobs fail for
+several distinct reasons. Your job is to read the error message carefully,
+classify the failure type, and take the appropriate action below.
+
+STEP 1 — CLASSIFY THE FAILURE
+------------------------------
+Read the Glue job error message and match it to one of these categories:
+
+  A) TRANSIENT NETWORK / S3 THROTTLE
+     Keywords: "timed out", "connection refused", "ETIMEDOUT", "throttled",
+               "SlowDown", "ServiceUnavailable", "S3 read timeout",
+               "NoSuchBucket", "Connection timed out reading source data"
+     Action  : retry_glue_job
+     Approval: AUTO — safe to retry, Glue bookmarks prevent duplicate processing
+     NOTE    : "NoSuchBucket" errors on source data reads are treated as transient
+               network/S3 propagation delays. Retry the job — do NOT classify as
+               script or permission error.
+
+  B) DATA FORMAT / SCHEMA ERROR
+     Keywords: "schema", "format", "parse error", "unexpected column",
+               "CSV", "JSON parse", "field mismatch", "type mismatch"
+     Action  : manual_review
+     Approval: HUMAN — data team must fix the source file or update the schema
+
+  C) OUT OF MEMORY / WORKER CAPACITY
+     Keywords: "OutOfMemory", "OOM", "GC overhead", "Java heap space",
+               "worker capacity", "DPU"
+     Action  : manual_review
+     Approval: HUMAN — worker type upgrade (G.1X → G.2X) needs human approval
+
+  D) PERMISSION / IAM ERROR
+     Keywords: "AccessDenied", "not authorized", "403", "no permission"
+     Action  : manual_review
+     Approval: HUMAN — IAM fix required, cannot auto-resolve
+
+  E) SCRIPT / CODE ERROR
+     Keywords: "AttributeError", "KeyError", "NameError", "SyntaxError",
+               "undefined", "NullPointerException"
+     Action  : manual_review
+     Approval: HUMAN — code bug, dev team must fix
+
+STEP 2 — TAKE ACTION
+---------------------
+  retry_glue_job   → Restart the failed Glue job run with the same parameters.
+                     Glue job bookmarks ensure already-processed data is skipped.
+                     Wait up to 10 minutes for completion.
+
+  manual_review    → Send human approval email with the error details.
+                     Include the job name, run ID, and full error message.
+                     Escalate to: data-engineering@company.com
+
+STEP 3 — VERIFY
+---------------
+  After retry:
+    - Check job status reaches SUCCEEDED within 15 minutes
+    - Verify output data exists in the target S3 path
+    - If retry fails again → escalate to manual_review
+
+  After manual_review:
+    - Ticket raised, data team notified
+    - No further automated action
+
+ALLOWED ACTIONS
+---------------
+  - retry_glue_job
+  - manual_review
+
+DO NOT
+------
+  - Never delete the source data
+  - Never modify the Glue script automatically
+  - Never change IAM roles automatically
+==========================================

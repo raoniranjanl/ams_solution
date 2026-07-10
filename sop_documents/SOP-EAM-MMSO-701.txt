@@ -1,0 +1,83 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID         : SOP-EAM-MMSO-701
+Service        : S3 (Enrollments MMS batch job)
+Job            : Enrollments MMS job
+Error Bucket   : eam-mmso-error-bucket-2330 (job run log files)
+Keyword Bucket : eam-mmso-keyword-bucket-2330 (folders: input/, processed/, error/)
+Error          : Enrollments MMS Job Failed
+Risk           : LOW
+Auto-Fix       : YES (failures below step 5000 only)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers failures of the "Enrollments MMS job" specifically. Unlike
+other job SOPs in this library, this job is diagnosed entirely from S3, not
+CloudWatch. Its most recent run log (written to the error bucket) records
+the step number it failed at (e.g. "Failed at step 4000"). Before taking
+any action, check that step number AND whether the keyword bucket's
+error/ folder currently holds any pending keyword files.
+
+MATCH RULE — READ THIS CAREFULLY
+---------------------------------
+Extract the failed step number from the most recent log file in
+eam-mmso-error-bucket-2330 (look for "Failed at step <N>" or an
+equivalent phrase). Also check eam-mmso-keyword-bucket-2330's error/
+folder for any files. Combine both signals per STEP 1 below - this is a
+deterministic combination of two observed facts, not an independent
+diagnosis.
+
+Example (real event, step 4000 - MATCHES the auto-retry rule):
+    JOB: Enrollments MMS job
+    ERROR: Failed at step 4000
+    Reason: Unable to process keyword file 'enrollment_batch_0417.dat' -
+            validation error.
+  -> Step 4000 is below 5000, AND the keyword bucket's error/ folder has
+     the file pending -> action: move_keyword_files_to_input, AUTO.
+
+STEP 1 — CLASSIFY THE FAILURE
+-------------------------------
+
+  A) Failed step BELOW 5000 (step < 5000) AND one or more keyword files
+     exist in the error/ folder
+     Action  : move_keyword_files_to_input
+     Approval: AUTO
+     Why     : Early-stage failure with pending keyword files - safe to
+               move them back to input/ so the job reprocesses them on
+               its next scheduled run.
+
+  B) Failed step BELOW 5000 (step < 5000) AND the error/ folder is empty
+     (no keyword files)
+     Action  : no_action_required
+     Approval: AUTO
+     Why     : Early-stage failure but nothing pending - no remediation
+               needed.
+
+  C) Failed step 5000 OR ABOVE (step >= 5000), regardless of whether
+     keyword files exist in error/
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Late-stage failure always needs human review - a failure
+               this far into the job is more likely to indicate a deeper
+               issue than a simple, safely-retryable blip, whether or
+               not keyword files happen to be pending.
+
+STEP 2 — VERIFY THE RETRY
+--------------------------
+After move_keyword_files_to_input runs, confirm the moved files no
+longer appear in error/ and the job's next scheduled run reaches
+SUCCEEDED.
+
+  - SUCCEEDED            -> log success, done.
+  - Anything else         -> STOP. Do not move files back a second time
+                             automatically. Escalate to
+                             data-engineering@company.com.
+
+SUMMARY
+-------
+  step < 5000, error/ has file(s)    -> move_keyword_files_to_input (auto)
+  step < 5000, error/ is empty       -> no_action_required (auto)
+  step >= 5000, either case          -> manual_review (human)
+  retry fails again                  -> manual_review (human), do not
+                                         auto-retry twice

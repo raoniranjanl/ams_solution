@@ -1,0 +1,52 @@
+{
+  "sop_id": "SOP-GLUE-CETL-501",
+  "title": "Glue Job Failure - agentic-dev-customer-etl-pipeline (Customer ETL Pipeline)",
+  "service": "GLUE",
+  "error_type": "GLUE_JOB_FAILURE",
+  "version": "1.1",
+  "job_name": "agentic-dev-customer-etl-pipeline",
+  "log_group": "/aws-glue/jobs/logs-v2",
+  "description": "Standard remediation for the agentic-dev-customer-etl-pipeline AWS Glue job. Classifies the failure from the CloudWatch 'Failure Reason' log content before acting - only a connection-refused error is safe to auto-retry; anything else needs human review.",
+
+  "match_rule": "Match on the literal substring 'connection refused' (case-insensitive) appearing ANYWHERE within the log event's Failure Reason / error message text. This is a substring match, not a root-cause diagnosis: if 'connection refused' appears even as part of a longer explanation (e.g. 'connection refused: required upstream table is currently locked by another job'), that STILL counts as a match for this rule and the action is retry_glue_job. Do not withhold the match just because additional context follows the phrase.",
+
+  "example_log_events": [
+    {
+      "description": "Real GlueETLJobExceptionEvent - matches the connection-refused rule",
+      "raw_event": "{\"Event\": \"GlueETLJobExceptionEvent\", \"Timestamp\": 1783513907401, \"Failure Reason\": \"Traceback (most recent call last):\\n  File \\\"/tmp/customer_etl.py\\\", line 19, in <module>\\n    raise RuntimeError(\\nRuntimeError: connection refused: required upstream table 'customer_raw' is currently locked by another job. Retry once the lock is released.\", \"script\": \"customer_etl.py\"}",
+      "matched_action": "retry_glue_job",
+      "why": "The Failure Reason contains the literal substring 'connection refused', so this classifies as case A below and is safe to auto-retry, even though the message goes on to explain a table lock rather than a network-level connection failure."
+    }
+  ],
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Classify the Glue job failure from the Failure Reason log content",
+      "instruction": "Read the 'Failure Reason' field (or equivalent error/exception text) from the job's CloudWatch log event. Check whether the substring 'connection refused' appears anywhere in it - see match_rule above for exactly how to apply this.",
+      "conditions": [
+        { "if": "Failure Reason contains the substring 'connection refused' (case-insensitive, anywhere in the text)", "action": "retry_glue_job", "approval": "auto", "note": "Per policy this is treated as a transient/retryable condition regardless of the specific explanation that follows (network refusal, table lock, etc.) - safe to retry the job as-is." },
+        { "if": "Failure Reason does NOT contain 'connection refused' (e.g. schema/data errors, OOM, permissions, unknown)", "action": "manual_review", "approval": "human", "note": "Non-matching failure - root cause must be reviewed by data engineering before retrying, since a blind retry would likely fail again the same way." }
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Verify retry outcome",
+      "instruction": "After retry_glue_job runs, confirm the job reaches SUCCEEDED. If it fails again, do not retry a second time automatically.",
+      "conditions": [
+        { "if": "job_run_state == 'SUCCEEDED'", "action": "log_success", "approval": "auto" },
+        { "if": "job_run_state != 'SUCCEEDED'", "action": "manual_review", "approval": "human", "note": "Retry did not resolve it - repeated failures indicate a persistent issue (e.g. the upstream lock is still held), not a one-off transient blip. Escalate." }
+      ]
+    }
+  ],
+
+  "resolution_steps": ["retry_glue_job", "manual_review"],
+  "auto_resolvable": true,
+  "risk_level": "LOW",
+  "blocked_actions": [],
+  "escalation_contact": "data-engineering@company.com",
+  "feedback_notes": "Only the literal substring 'connection refused' triggers auto-resolution by design - this is a simple, deterministic keyword rule, not an independent root-cause diagnosis. It intentionally also covers cases like upstream table locks that phrase their error as 'connection refused: ...', since a single retry is cheap and safe even if the true cause needs a second look after a repeat failure (see step 2). All other error patterns (schema mismatch, out-of-memory, permissions, data quality) require human review because a retry alone will not fix them.",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}

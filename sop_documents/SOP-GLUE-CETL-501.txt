@@ -1,0 +1,83 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-GLUE-CETL-501
+Service  : AWS Glue
+Job      : agentic-dev-customer-etl-pipeline
+Log Group: /aws-glue/jobs/logs-v2
+Error    : Glue Job Run Failed
+Risk     : LOW
+Auto-Fix : YES (connection-refused failures only)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers failures of the "agentic-dev-customer-etl-pipeline" Glue
+job specifically. Before taking any action, check the job's CloudWatch
+"Failure Reason" log content to classify WHY it failed - only one
+failure pattern is safe to auto-remediate.
+
+MATCH RULE — READ THIS CAREFULLY
+---------------------------------
+The rule is a plain SUBSTRING MATCH on the text "connection refused"
+(case-insensitive), not an independent root-cause diagnosis. If that
+phrase appears ANYWHERE in the Failure Reason - even as part of a longer
+explanation - it counts as a match. Do not withhold the match just
+because more context follows the phrase.
+
+Example (real event, MATCHES this rule):
+    {
+      "Event": "GlueETLJobExceptionEvent",
+      "Timestamp": 1783513907401,
+      "Failure Reason": "Traceback (most recent call last):
+        File \"/tmp/customer_etl.py\", line 19, in <module>
+          raise RuntimeError(
+      RuntimeError: connection refused: required upstream table
+      'customer_raw' is currently locked by another job. Retry once the
+      lock is released.",
+      "script": "customer_etl.py"
+    }
+  -> Contains "connection refused" -> action: retry_glue_job, AUTO.
+     (Yes, even though the real cause is a table lock, not a network-
+     level refusal - the phrase "connection refused" is present, so per
+     policy this is treated as retryable. A single retry is cheap; if it
+     fails again, step 2 below sends it to a human instead of retrying
+     endlessly.)
+
+STEP 1 — CLASSIFY THE FAILURE FROM THE LOGS
+--------------------------------------------
+
+  A) CONTAINS "connection refused"
+     Action  : retry_glue_job
+     Approval: AUTO
+     Why     : Per this SOP's policy, any Failure Reason containing this
+               phrase is treated as retryable - covers both literal
+               network connection refusals and lock/contention errors
+               that are phrased this way (see example above).
+
+  B) DOES NOT CONTAIN "connection refused" (schema mismatch,
+     out-of-memory, permissions, data quality, unknown)
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Not covered by the auto-retry rule - retrying without
+               understanding the root cause will very likely fail again
+               the same way. Data engineering must review before any
+               retry.
+
+STEP 2 — VERIFY THE RETRY
+--------------------------
+After retry_glue_job runs, confirm the job reaches state SUCCEEDED.
+
+  - SUCCEEDED            -> log success, done.
+  - Anything else         -> STOP. Do not retry a second time
+                             automatically. Escalate to data engineering
+                             (data-engineering@company.com) - a second
+                             consecutive failure (e.g. the lock is still
+                             held) means a human needs to intervene.
+
+SUMMARY
+-------
+  Failure Reason contains "connection refused" (anywhere, any context)
+                                     -> retry_glue_job (auto)
+  Failure Reason does not contain it -> manual_review (human)
+  retry fails again                  -> manual_review (human), do not
+                                         auto-retry twice

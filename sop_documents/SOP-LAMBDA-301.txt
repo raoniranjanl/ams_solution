@@ -1,0 +1,87 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-LAMBDA-301
+Service  : AWS Lambda (Serverless Functions)
+Error    : Lambda Error Rate Spike
+Risk     : LOW
+Auto-Fix : YES (for timeout and transient dependency errors)
+==========================================
+
+OVERVIEW
+--------
+Lambda errors are classified by their CloudWatch log message. Read the error
+message carefully. Transient errors (timeouts, network) can be auto-fixed by
+forcing a cold start. Code bugs and permission errors require human action.
+
+STEP 1 — CLASSIFY ERROR FROM LOGS
+-----------------------------------
+
+  A) TIMEOUT
+     Keywords: "Task timed out", "timed out after", "DEADLINE_EXCEEDED"
+     Action  : restart_lambda (force cold start via config update)
+     Approval: AUTO
+     Why     : Cold start gets a fresh execution environment.
+               If timeout recurs → human must increase the timeout setting.
+
+  B) DEPENDENCY / NETWORK ERROR (TRANSIENT)
+     Keywords: "Connection refused", "ECONNREFUSED", "ETIMEDOUT",
+               "ServiceUnavailable", "ThrottlingException", "getaddrinfo ENOTFOUND"
+     Action  : restart_lambda
+     Approval: AUTO
+     Why     : Transient failures cleared by cold start with fresh network state.
+
+  C) OUT OF MEMORY
+     Keywords: "Runtime exited", "signal: killed", "memory size exceeded",
+               "Process exited before completing"
+     Action  : restart_lambda
+     Approval: AUTO (cold start only — memory increase needs human approval)
+     Note    : After restart, human should increase memory from current to 2x.
+
+  D) CODE / LOGIC ERROR
+     Keywords: "TypeError", "AttributeError", "NameError", "KeyError",
+               "ValueError", "SyntaxError", "ImportError", "ModuleNotFoundError",
+               "ZeroDivisionError", "IndexError"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Code bug — restart will not fix it. Rollback required.
+
+  E) PERMISSION ERROR
+     Keywords: "AccessDenied", "not authorized", "UnauthorizedOperation",
+               "is not authorized to perform"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : IAM permission must be added manually.
+
+  F) CONCURRENCY / THROTTLE
+     Keywords: "Rate exceeded", "TooManyRequestsException", "concurrent executions",
+               "reserved concurrency"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Concurrency limit increase requires AWS Support or manual config.
+
+STEP 2 — TAKE ACTION
+---------------------
+  restart_lambda   → Update function environment variable _RESTART_TS to current
+                      timestamp. This forces a cold start without code changes.
+                      Zero downtime — in-flight requests complete normally.
+
+  manual_review    → Send alert with:
+                      - Function name
+                      - Error pattern classification
+                      - Sample log lines showing the error
+                      - Suggested fix (rollback version, add IAM permission, etc.)
+                      Escalate to: dev-team@company.com
+
+STEP 3 — VERIFY
+---------------
+  After restart_lambda:
+    - Monitor CloudWatch error rate metric for 3 minutes
+    - If error rate drops below 1% → success
+    - If error rate stays high → the error is code-level → manual_review
+
+ALLOWED ACTIONS
+---------------
+  - restart_lambda
+  - clear_lambda_error
+  - manual_review
+==========================================

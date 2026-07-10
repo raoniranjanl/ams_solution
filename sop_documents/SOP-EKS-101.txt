@@ -1,0 +1,83 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-EKS-101
+Service  : Amazon ECS (Containers)
+Error    : ECS Container Crash / Node Not Ready
+Risk     : MEDIUM
+Auto-Fix : YES (for exit codes 1, 137, 143)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers ECS task failures and node-level issues. The container exit
+code is the most important signal. Read it carefully before acting.
+
+STEP 1 — READ THE EXIT CODE
+----------------------------
+  Exit Code 137 → OOMKilled (out of memory)
+    Action  : scale_out_ecs first, then restart_ecs_service
+    Approval: AUTO
+
+  Exit Code 1   → Application error (generic crash)
+    Action  : restart_ecs_service
+    Approval: AUTO
+
+  Exit Code 143 → SIGTERM (graceful shutdown, then crash)
+    Action  : restart_ecs_service
+    Approval: AUTO
+
+  Exit Code 125 → Docker daemon error (container runtime issue)
+    Action  : restart_ecs_node
+    Approval: AUTO
+
+  Exit Code 126 → Permission denied (IAM or file system)
+    Action  : manual_review
+    Approval: HUMAN — permissions cannot be auto-fixed
+
+  Exit Code 127 → Command not found (bad image or entrypoint)
+    Action  : manual_review
+    Approval: HUMAN — image or task definition is broken
+
+  Exit Code 139 → Segmentation fault (memory corruption in app)
+    Action  : manual_review
+    Approval: HUMAN — code bug, needs developer
+
+  No exit code  → Node is unreachable
+    Action  : restart_ecs_node
+    Approval: AUTO
+
+STEP 2 — CHECK CLUSTER CAPACITY BEFORE RESTARTING
+---------------------------------------------------
+  Before any restart action, check if the cluster can handle it:
+    - If only 1 task running → restarting causes full outage → manual_review
+    - If desired count > 1 → safe to restart, rolling update
+    - If cluster CPU/memory > 90% → scale_out_ecs first, then restart
+
+STEP 3 — TAKE ACTION
+---------------------
+  restart_ecs_service → Force a new deployment (forceNewDeployment=true).
+                         ECS rolls out new tasks before stopping old ones.
+                         Zero-downtime if desired count >= 2.
+
+  restart_ecs_node    → Reboot the underlying EC2 instance running the task.
+                         Use when the node itself is unresponsive.
+
+  scale_out_ecs       → Increase desired task count by 50% (min +1).
+                         Do this before restart if OOMKilled.
+
+  manual_review       → Human must investigate. Send alert with cluster name,
+                         service name, task ARN, exit code, and CloudWatch logs.
+
+STEP 4 — VERIFY
+---------------
+  - Service should reach STEADY_STATE within 5 minutes
+  - Check ALB target group shows all targets healthy
+  - If not stable after 5 minutes → manual_review
+
+ALLOWED ACTIONS
+---------------
+  - restart_ecs_service
+  - restart_ecs_node
+  - scale_out_ecs
+  - manual_review
+==========================================

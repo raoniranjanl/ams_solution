@@ -1,0 +1,79 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-EC2-401
+Service  : Amazon EC2 (Virtual Machines)
+Error    : EC2 Instance Failure / Status Check Failed
+Risk     : MEDIUM
+Auto-Fix : YES (for system and instance status check failures)
+==========================================
+
+OVERVIEW
+--------
+EC2 has two independent status checks. The type that failed tells you what
+action to take. Taking the wrong action (e.g., reboot when you need stop-start)
+will not fix the problem.
+
+STEP 1 — IDENTIFY WHICH STATUS CHECK FAILED
+--------------------------------------------
+
+  A) SYSTEM STATUS CHECK FAILED
+     Meaning : AWS hardware/infrastructure problem (physical host, network, power)
+     Action  : stop_start_ec2
+     Approval: AUTO
+     Why     : Stop-start moves the instance to a NEW physical host.
+               Reboot keeps it on the same failed host — won't work.
+     Warning : Public IP changes unless Elastic IP is assigned.
+
+  B) INSTANCE STATUS CHECK FAILED
+     Meaning : OS/software problem (kernel panic, filesystem, OS services)
+     Action  : restart_ec2_instance
+     Approval: AUTO
+     Why     : Reboot resets the OS. Faster than stop-start.
+
+  C) BOTH STATUS CHECKS FAILED
+     Meaning : Severe failure — both hardware and OS problems
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : High risk of data loss if instance store used. Human must verify.
+
+  D) ALARM ONLY (no clear status check failure)
+     Meaning : Application-level issue, not EC2 itself
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : If EC2 itself is fine, problem is in the application layer.
+
+STEP 2 — SPECIAL CASE: AUTO SCALING GROUP
+------------------------------------------
+  If the instance is part of an ASG:
+    → Do NOT reboot. The ASG will detect unhealthy instance and replace it.
+    → Action: manual_review — let ASG self-heal, just confirm it does.
+
+STEP 3 — TAKE ACTION
+---------------------
+  stop_start_ec2      → Stop the instance, wait for stopped state, then start.
+                         Moves to new physical host. Takes 2-4 minutes.
+                         Use for system status check failures.
+
+  restart_ec2_instance → Send reboot signal. Takes 1-2 minutes.
+                          Use for instance status check failures.
+
+  manual_review        → Send alert with:
+                           - Instance ID
+                           - Availability Zone
+                           - Status check failure type
+                           - Whether in ASG (yes/no)
+                          Escalate to: infra-team@company.com
+
+STEP 4 — VERIFY
+---------------
+  After stop_start or reboot:
+    - Both status checks must show "passed" within 5 minutes
+    - Application must respond to health check
+    - If checks still failing after 5 min → instance may need replacement from AMI
+
+ALLOWED ACTIONS
+---------------
+  - restart_ec2_instance
+  - stop_start_ec2
+  - manual_review
+==========================================

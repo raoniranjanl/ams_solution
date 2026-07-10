@@ -1,0 +1,57 @@
+{
+  "sop_id": "SOP-EC2-401",
+  "title": "EC2 Instance Failure – Status Check and Recovery",
+  "service": "EC2",
+  "error_type": "EC2_INSTANCE_FAILURE",
+  "version": "2.0",
+  "description": "EC2 recovery with pre-checks. Reads instance classification guide from S3 to decide between soft reboot vs hard stop-start vs replacement.",
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Classify status check failure",
+      "refer_to_file": "runbooks/ec2-status-check-guide.json",
+      "instruction": "Read EC2 status check type. System status check failure means AWS hardware issue. Instance status check failure means OS/app issue.",
+      "conditions": [
+        { "if": "status_check == 'system_status_failed'",   "action": "stop_start_ec2",       "approval": "auto",  "note": "AWS hardware issue – stop/start moves to new host" },
+        { "if": "status_check == 'instance_status_failed'", "action": "restart_ec2_instance", "approval": "auto",  "note": "OS issue – reboot is sufficient" },
+        { "if": "status_check == 'both_failed'",            "action": "stop_start_ec2",       "approval": "human", "note": "Both failed – hard reset, confirm before action" },
+        { "if": "status_check == 'unknown'",                "action": "manual_review",        "approval": "human", "note": "Cannot determine failure – human check needed" }
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Check if instance is in Auto Scaling Group",
+      "refer_to_file": "runbooks/ec2-asg-membership-guide.json",
+      "instruction": "If instance is in an ASG, terminating it is safer than rebooting – ASG will replace it. If standalone, reboot carefully.",
+      "conditions": [
+        { "if": "in_asg == true && status_check == 'system_status_failed'", "action": "manual_review",        "approval": "human", "note": "Let ASG health check terminate and replace" },
+        { "if": "in_asg == false",                                           "action": "restart_ec2_instance", "approval": "auto",  "note": "Standalone instance – reboot" }
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Verify instance recovery",
+      "refer_to_file": "runbooks/ec2-post-recovery-checklist.json",
+      "instruction": "After reboot/stop-start, verify both status checks pass within 5 minutes and application responds.",
+      "conditions": [
+        { "if": "both_checks_pass == true && app_healthy == true",  "action": "log_success",   "approval": "auto"  },
+        { "if": "both_checks_pass == true && app_healthy == false", "action": "manual_review", "approval": "human", "note": "Instance up but app not responding – app-level issue" },
+        { "if": "both_checks_pass == false",                        "action": "manual_review", "approval": "human", "note": "Instance still unhealthy – may need replacement from AMI" }
+      ]
+    }
+  ],
+
+  "resolution_steps": [
+    "restart_ec2_instance",
+    "stop_start_ec2",
+    "manual_review"
+  ],
+  "auto_resolvable": true,
+  "risk_level": "MEDIUM",
+  "feedback_notes": "System status failures need stop-start (new host). Instance status failures only need reboot.",
+  "escalation_contact": "infra-team@company.com",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}

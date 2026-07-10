@@ -1,0 +1,23 @@
+{
+  "sop_id": "SOP-GLUE-501",
+  "title": "AWS Glue ETL Job Failure – Retry and Recovery",
+  "service": "GLUE",
+  "error_type": "GLUE_FAILED",
+  "version": "1.0",
+  "description": "Handles Glue ETL job failures including memory errors, data format issues, and transient network failures.",
+  "prerequisites": [
+    "Ensure glue:StartJobRun permission",
+    "Check Glue job logs in CloudWatch for specific error"
+  ],
+  "steps": [
+    "Review Glue job run logs in CloudWatch for error details",
+    "Check if failure is transient (S3 throttling, network) or persistent (data schema issue)",
+    "For transient failures: retry_glue_job with same parameters",
+    "For memory errors: increase worker type from G.1X to G.2X or increase number of workers",
+    "Verify S3 source data integrity before retry",
+    "Monitor retry execution in Glue console"
+  ],
+  "rollback": "If retry fails, mark job as skipped and alert data engineering team",
+  "escalation": "After 3 retry attempts escalate to data engineering team",
+  "related_sops": []
+}

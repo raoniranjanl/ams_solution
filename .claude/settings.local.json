@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('agents/job_remediation_agent.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -m tests.test_job_remediation_agent)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('evals/eval_job_remediation.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -m evals.eval_job_remediation)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('common/s3_client.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"from config import get_settings; s = get_settings\\(\\); print\\(s.s3\\)\")",
+      "Bash(python -c \"from common.s3_client import S3Client; from config import get_settings; c = S3Client\\(get_settings\\(\\).s3\\); print\\(c\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('common/sop_store.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python -c \"import main; print\\('import OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tests/test_job_remediation_agent.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -m tests.test_remediation_executor_s3_actions)"
+    ]
+  }
+}

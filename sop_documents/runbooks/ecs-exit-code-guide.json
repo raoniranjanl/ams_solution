@@ -1,0 +1,21 @@
+{
+  "title": "ECS Container Exit Code Reference Guide",
+  "description": "Use this guide to classify the type of ECS failure based on the container exit code",
+  "exit_codes": [
+    { "code": 0,   "meaning": "Success – container exited cleanly, not a failure" },
+    { "code": 1,   "meaning": "Application error – generic failure in app code", "action": "restart_ecs_service", "approval": "auto" },
+    { "code": 125, "meaning": "Docker daemon error – container runtime issue",   "action": "restart_ecs_node",    "approval": "auto" },
+    { "code": 126, "meaning": "Permission denied – IAM or file permission issue","action": "manual_review",       "approval": "human" },
+    { "code": 127, "meaning": "Command not found – bad entrypoint or image",     "action": "manual_review",       "approval": "human" },
+    { "code": 128, "meaning": "Invalid signal – process killed unexpectedly",    "action": "restart_ecs_service", "approval": "auto" },
+    { "code": 137, "meaning": "OOMKilled – container ran out of memory",         "action": "scale_out_ecs",       "approval": "auto" },
+    { "code": 139, "meaning": "Segmentation fault – app memory corruption",      "action": "manual_review",       "approval": "human" },
+    { "code": 143, "meaning": "SIGTERM – graceful shutdown requested",           "action": "restart_ecs_service", "approval": "auto" },
+    { "code": 255, "meaning": "Exit status out of range – kernel or host issue", "action": "restart_ecs_node",    "approval": "auto" }
+  ],
+  "if_exit_code_missing": {
+    "meaning": "Node is unreachable or container never started",
+    "action": "restart_ecs_node",
+    "approval": "auto"
+  }
+}

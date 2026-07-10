@@ -1,0 +1,83 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-RDS-201
+Service  : Amazon RDS (Databases)
+Error    : RDS Instance Failure / Availability Issue
+Risk     : MEDIUM
+Auto-Fix : YES (for connection exhaustion and instance crash only)
+==========================================
+
+OVERVIEW
+--------
+RDS failures fall into a few categories. Identify the category from the
+error message BEFORE taking any action. Wrong action can extend downtime.
+
+STEP 1 — CLASSIFY THE FAILURE
+------------------------------
+
+  A) CONNECTION EXHAUSTED
+     Keywords: "too many connections", "connection refused", "max_connections",
+               "connection pool exhausted", "FATAL: remaining connection slots"
+     Action  : restart_rds_instance
+     Approval: AUTO
+     Why     : Reboot clears all active connections and resets the pool.
+               Downtime: ~60 sec Single-AZ, ~30 sec Multi-AZ (failover reboot).
+
+  B) INSTANCE CRASH / RECOVERY
+     Keywords: "database process", "recovery mode", "InnoDB recovery",
+               "crash recovery", "restarting database", "DB instance restarted"
+     Action  : restart_rds_instance
+     Approval: AUTO
+     Why     : RDS runs crash recovery automatically on reboot. Safe to initiate.
+
+  C) MULTI-AZ FAILOVER IN PROGRESS
+     Keywords: "Multi-AZ", "failover completed", "failover started", "new master"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Failover is already happening. Do NOT reboot during failover.
+               Just monitor. Alert DBA team.
+
+  D) STORAGE FULL
+     Keywords: "storage full", "no space", "disk full", "ENOSPC", "out of storage",
+               "allocated storage"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Storage expansion cost decision needs human approval.
+
+  E) PARAMETER GROUP / CONFIGURATION ERROR
+     Keywords: "parameter group", "invalid parameter", "incompatible parameters"
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Wrong parameter values can crash the DB. Human must review.
+
+STEP 2 — TAKE ACTION
+---------------------
+  restart_rds_instance → Call rds:RebootDBInstance.
+                          Expected downtime: 60-90 seconds.
+                          If Multi-AZ enabled, use failover reboot (near-zero downtime).
+
+  manual_review        → Send human approval email with:
+                          - DB identifier
+                          - Failure type classification
+                          - Event message
+                          Escalate to: dba-team@company.com
+
+STEP 3 — VERIFY
+---------------
+  After restart_rds_instance:
+    - Wait for status to return to "available" (up to 5 minutes)
+    - Confirm application can connect
+    - Check RDS CloudWatch metrics: DatabaseConnections, CPUUtilization
+    - If status stays "failed" after 5 minutes → manual_review immediately
+
+ALLOWED ACTIONS
+---------------
+  - restart_rds_instance
+  - manual_review
+
+IMPORTANT
+---------
+  Never reboot during an active Multi-AZ failover.
+  Never modify parameter groups automatically.
+  Always check Multi-AZ status before rebooting.
+==========================================
