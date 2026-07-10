@@ -13,4 +13,4 @@ audit_trail.db
 
 # Editor / OS files
 .vscode/
-.DS_Store
+.DS_Store.env
