@@ -5,11 +5,20 @@ no real ServiceNow, Qdrant, Anthropic, or SMTP calls are made. Covers:
   - remediation: guardrails pass (auto-execute) / guardrails fail (approval email)
   - ApprovalStore and GuardrailsValidator directly
 
+NOTE: since ApprovalStore/AuditStore migrated from SQLite to PostgreSQL,
+these tests need a real Postgres reachable at POSTGRES_URL (default
+postgresql://postgres:postgres@localhost:5432/ams_agentic - see
+config.PostgresSettings), e.g.:
+    docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ams_agentic postgres
+make_approval_store()/make_audit_store() drop and recreate their table on
+each call so every test still starts from an empty table, same isolation
+the old per-test SQLite tempfile gave for free.
+
 Run with:  python -m tests.test_orchestrator_flow
 """
-import os
-import tempfile
 from unittest.mock import MagicMock, patch
+
+import psycopg2
 
 from agents.ams_orchestrator_agent import AMSOrchestratorAgent
 from common.approval_store import ApprovalStore
@@ -32,16 +41,26 @@ def make_ticket(number="INC0010001") -> Ticket:
     )
 
 
+def _reset_table(dsn: str, table_name: str) -> None:
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {table_name}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def make_approval_store() -> ApprovalStore:
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    return ApprovalStore(path)
+    dsn = get_settings().postgres.url
+    _reset_table(dsn, "approvals")
+    return ApprovalStore(dsn)
 
 
 def make_audit_store() -> AuditStore:
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    return AuditStore(path)
+    dsn = get_settings().postgres.url
+    _reset_table(dsn, "audit_trail")
+    return AuditStore(dsn)
 
 
 def make_orchestrator(settings, servicenow_client, incident_router, job_remediation, llm_client,

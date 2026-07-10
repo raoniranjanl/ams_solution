@@ -1,18 +1,20 @@
 """
 Audit trail for remediation actions - analogous to the reference
-architecture's Zone 4 DynamoDB audit trail, implemented in SQLite (stdlib,
-no extra dependency, same pattern as common/approval_store.py) so it's
-easy to run locally and easy to swap for a real database later.
+architecture's Zone 4 DynamoDB audit trail, implemented in PostgreSQL
+(shares one Postgres instance/database with common/approval_store.py -
+see config.PostgresSettings).
 
 Every remediation decision gets one row here, whether it was
 auto-executed or human-approved, and whether it succeeded or failed -
 this is the record you'd point an auditor at.
 """
 import contextlib
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
+
+import psycopg2
+import psycopg2.extras
 
 
 @dataclass
@@ -31,34 +33,33 @@ class AuditRecord:
 
 
 class AuditStore:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, dsn: str):
+        self.dsn = dsn
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self):
+        return psycopg2.connect(self.dsn, cursor_factory=psycopg2.extras.RealDictCursor)
 
     def _init_db(self) -> None:
         with contextlib.closing(self._connect()) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS audit_trail (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ticket_number TEXT NOT NULL,
-                    job_name TEXT,
-                    action TEXT,
-                    sop_id TEXT,
-                    risk_level TEXT,
-                    confidence REAL,
-                    actor TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    message TEXT,
-                    created_at TEXT NOT NULL
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_trail (
+                        id SERIAL PRIMARY KEY,
+                        ticket_number TEXT NOT NULL,
+                        job_name TEXT,
+                        action TEXT,
+                        sop_id TEXT,
+                        risk_level TEXT,
+                        confidence REAL,
+                        actor TEXT NOT NULL,
+                        result TEXT NOT NULL,
+                        message TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
             conn.commit()
 
     def log(
@@ -67,23 +68,26 @@ class AuditStore:
         sop_id: Optional[str] = None, risk_level: Optional[str] = None, confidence: float = 0.0,
     ) -> None:
         with contextlib.closing(self._connect()) as conn:
-            conn.execute(
-                """
-                INSERT INTO audit_trail
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO audit_trail
+                        (ticket_number, job_name, action, sop_id, risk_level, confidence,
+                         actor, result, message, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
                     (ticket_number, job_name, action, sop_id, risk_level, confidence,
-                     actor, result, message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (ticket_number, job_name, action, sop_id, risk_level, confidence,
-                 actor, result, message, datetime.now(timezone.utc).isoformat()),
-            )
+                     actor, result, message, datetime.now(timezone.utc).isoformat()),
+                )
             conn.commit()
 
     def for_ticket(self, ticket_number: str) -> List[AuditRecord]:
         with contextlib.closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM audit_trail WHERE ticket_number = ? ORDER BY created_at", (ticket_number,)
-            ).fetchall()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM audit_trail WHERE ticket_number = %s ORDER BY created_at", (ticket_number,)
+                )
+                rows = cur.fetchall()
         return [
             AuditRecord(
                 id=r["id"], ticket_number=r["ticket_number"], job_name=r["job_name"], action=r["action"],

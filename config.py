@@ -89,7 +89,6 @@ class ApprovalSettings:
     base_url: str = field(default_factory=lambda: os.getenv("APPROVAL_BASE_URL", "http://localhost:8000"))
     host: str = field(default_factory=lambda: os.getenv("APPROVAL_SERVER_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("APPROVAL_SERVER_PORT", "8000")))
-    db_path: str = field(default_factory=lambda: os.getenv("APPROVAL_DB_PATH", "approvals.db"))
     token_ttl_hours: int = field(default_factory=lambda: int(os.getenv("APPROVAL_TOKEN_TTL_HOURS", "72")))
 
 
@@ -117,7 +116,6 @@ class RemediationSettings:
         )
     )
     sop_dir: str = field(default_factory=lambda: os.getenv("SOP_DOCUMENTS_DIR", "sop_documents"))
-    audit_db_path: str = field(default_factory=lambda: os.getenv("AUDIT_DB_PATH", "audit_trail.db"))
     reindex_sops_on_startup: bool = field(default_factory=lambda: _bool("SOP_REINDEX_ON_STARTUP", "false"))
 
 
@@ -154,6 +152,23 @@ class S3Settings:
 
 
 @dataclass
+class PostgresSettings:
+    """
+    Config for the shared PostgreSQL database backing common/audit_store.py
+    (the remediation audit trail) and common/approval_store.py (human
+    approval tokens) - one Postgres instance/database, two tables, mirroring
+    how one shared Qdrant collection backs multiple sources via a `source`
+    tag. Run locally the same way as Qdrant, e.g.:
+        docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ams_agentic postgres
+    """
+    url: str = field(
+        default_factory=lambda: os.getenv(
+            "POSTGRES_URL", "postgresql://postgres:postgres@localhost:5432/ams_agentic"
+        )
+    )
+
+
+@dataclass
 class Settings:
     anthropic: AnthropicSettings = field(default_factory=AnthropicSettings)
     servicenow: ServiceNowSettings = field(default_factory=ServiceNowSettings)
@@ -164,6 +179,7 @@ class Settings:
     remediation: RemediationSettings = field(default_factory=RemediationSettings)
     cloudwatch: CloudWatchSettings = field(default_factory=CloudWatchSettings)
     s3: S3Settings = field(default_factory=S3Settings)
+    postgres: PostgresSettings = field(default_factory=PostgresSettings)
 
     confidence_threshold: float = field(default_factory=lambda: float(os.getenv("CONFIDENCE_THRESHOLD", "0.65")))
     top_k_similar_incidents: int = field(default_factory=lambda: int(os.getenv("TOP_K_SIMILAR_INCIDENTS", "5")))

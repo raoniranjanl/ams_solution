@@ -1,5 +1,9 @@
 """
-Lightweight persistent store for human-approval tokens.
+Persistent store for human-approval tokens - PostgreSQL-backed (shares one
+Postgres instance/database with common/audit_store.py - see
+config.PostgresSettings), so the orchestrator process and the
+approval_server.py web process can share state via a real server, even
+though they run as separate processes.
 
 Handles TWO kinds of approvals through the same table/token mechanism:
   - "routing"     - low-confidence L2 assignment group suggestion
@@ -13,18 +17,16 @@ clicks it, approval_server.py looks the token up here, checks `kind`, and
 either updates the ServiceNow assignment group or executes the
 remediation action (including its action_parameters, e.g. the ECS
 cluster/service name, RDS identifier, etc.) accordingly.
-
-Uses SQLite (stdlib, no extra dependency) so the orchestrator process
-and the approval_server.py web process can share state via a single file
-on disk, even though they run as separate processes.
 """
 import contextlib
 import json
 import secrets
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
+
+import psycopg2
+import psycopg2.extras
 
 
 @dataclass
@@ -52,50 +54,51 @@ class ApprovalRecord:
     risk_level: Optional[str] = None
 
 
+# Columns added after the original table shape - kept as a flat list since
+# Postgres supports "ADD COLUMN IF NOT EXISTS" natively (no need to probe
+# existing columns first the way SQLite's PRAGMA table_info required).
+_OPTIONAL_COLUMNS = (
+    ("kind", "TEXT DEFAULT 'routing'"),
+    ("action", "TEXT"),
+    ("action_parameters", "TEXT"),
+    ("job_name", "TEXT"),
+    ("sop_id", "TEXT"),
+    ("risk_level", "TEXT"),
+    ("short_description", "TEXT"),
+    ("description", "TEXT"),
+    ("cmdb_ci_name", "TEXT"),
+)
+
+
 class ApprovalStore:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, dsn: str):
+        self.dsn = dsn
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self):
+        return psycopg2.connect(self.dsn, cursor_factory=psycopg2.extras.RealDictCursor)
 
     def _init_db(self) -> None:
         with contextlib.closing(self._connect()) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS approvals (
-                    token TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL DEFAULT 'routing',
-                    ticket_number TEXT NOT NULL,
-                    sys_id TEXT NOT NULL,
-                    table_name TEXT NOT NULL,
-                    assignment_group TEXT,
-                    action TEXT,
-                    action_parameters TEXT,
-                    job_name TEXT,
-                    sop_id TEXT,
-                    risk_level TEXT,
-                    confidence REAL NOT NULL,
-                    rationale TEXT,
-                    short_description TEXT,
-                    description TEXT,
-                    cmdb_ci_name TEXT,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS approvals (
+                        token TEXT PRIMARY KEY,
+                        ticket_number TEXT NOT NULL,
+                        sys_id TEXT NOT NULL,
+                        table_name TEXT NOT NULL,
+                        assignment_group TEXT,
+                        confidence REAL NOT NULL,
+                        rationale TEXT,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            # Best-effort migration for DBs created before these columns existed.
-            existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(approvals)")}
-            for col in ("kind", "action", "action_parameters", "job_name", "sop_id", "risk_level",
-                        "short_description", "description", "cmdb_ci_name"):
-                if col not in existing_cols:
-                    default = " DEFAULT 'routing'" if col == "kind" else ""
-                    conn.execute(f"ALTER TABLE approvals ADD COLUMN {col} TEXT{default}")
+                for col, coltype in _OPTIONAL_COLUMNS:
+                    cur.execute(f"ALTER TABLE approvals ADD COLUMN IF NOT EXISTS {col} {coltype}")
             conn.commit()
 
     def create_approval(
@@ -112,26 +115,29 @@ class ApprovalStore:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(hours=ttl_hours)
         with contextlib.closing(self._connect()) as conn:
-            conn.execute(
-                """
-                INSERT INTO approvals
-                    (token, kind, ticket_number, sys_id, table_name, assignment_group,
-                     action, action_parameters, job_name, sop_id, risk_level,
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO approvals
+                        (token, kind, ticket_number, sys_id, table_name, assignment_group,
+                         action, action_parameters, job_name, sop_id, risk_level,
+                         confidence, rationale, short_description, description, cmdb_ci_name,
+                         status, created_at, expires_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                    """,
+                    (token, kind, ticket_number, sys_id, table, assignment_group,
+                     action, json.dumps(action_parameters or {}), job_name, sop_id, risk_level,
                      confidence, rationale, short_description, description, cmdb_ci_name,
-                     status, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-                """,
-                (token, kind, ticket_number, sys_id, table, assignment_group,
-                 action, json.dumps(action_parameters or {}), job_name, sop_id, risk_level,
-                 confidence, rationale, short_description, description, cmdb_ci_name,
-                 now.isoformat(), expires.isoformat()),
-            )
+                     now.isoformat(), expires.isoformat()),
+                )
             conn.commit()
         return token
 
     def get(self, token: str) -> Optional[ApprovalRecord]:
         with contextlib.closing(self._connect()) as conn:
-            row = conn.execute("SELECT * FROM approvals WHERE token = ?", (token,)).fetchone()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM approvals WHERE token = %s", (token,))
+                row = cur.fetchone()
         if not row:
             return None
         try:
@@ -166,5 +172,6 @@ class ApprovalStore:
 
     def mark_status(self, token: str, status: str) -> None:
         with contextlib.closing(self._connect()) as conn:
-            conn.execute("UPDATE approvals SET status = ? WHERE token = ?", (status, token))
+            with conn.cursor() as cur:
+                cur.execute("UPDATE approvals SET status = %s WHERE token = %s", (status, token))
             conn.commit()

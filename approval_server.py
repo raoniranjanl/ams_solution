@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 servicenow_client = ServiceNowClient(settings.servicenow)
-approval_store = ApprovalStore(settings.approval.db_path)
+approval_store = ApprovalStore(settings.postgres.url)
 vector_store = VectorStore(settings.qdrant, settings.embedding)
 remediation_executor = RemediationExecutor()
-audit_store = AuditStore(settings.remediation.audit_db_path)
+audit_store = AuditStore(settings.postgres.url)
 
 app = Flask(__name__)
 

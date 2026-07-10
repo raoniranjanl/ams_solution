@@ -69,9 +69,9 @@ def build_orchestrator() -> AMSOrchestratorAgent:
     if settings.remediation.reindex_sops_on_startup:
         sop_store.index_into_vector_db()
 
-    # --- Approval token store + audit trail (shared with approval_server.py)
-    approval_store = ApprovalStore(settings.approval.db_path)
-    audit_store = AuditStore(settings.remediation.audit_db_path)
+    # --- Approval token store + audit trail (PostgreSQL, shared with approval_server.py)
+    approval_store = ApprovalStore(settings.postgres.url)
+    audit_store = AuditStore(settings.postgres.url)
 
     # --- Guardrails + executor for remediation actions --------------------
     guardrails = GuardrailsValidator(settings.remediation)

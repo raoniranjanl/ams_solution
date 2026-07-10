@@ -9,7 +9,7 @@ Multi-agent system for ServiceNow production support:
 | Job Remediation AI Agent | ✅ Built - real AWS remediation via boto3, gated by SOP-driven guardrails |
 | Shared Vector Database (BGE-M3 + Qdrant) | ✅ Built - incidents + SOPs, continuously updated |
 | Human approval via email (routing + remediation) | ✅ Built - one-click Approve/Reject links |
-| Audit trail | ✅ Built (SQLite) |
+| Audit trail | ✅ Built (PostgreSQL) |
 
 Every agent is backed by an **Anthropic LLM model** via `common/llm_client.py` (each agent's model is independently configurable in `.env`).
 
@@ -77,8 +77,8 @@ ams_solution/
 │   ├── guardrails.py                # safety gate before any auto-remediation
 │   ├── aws_client.py                # boto3 session/client factory
 │   ├── remediation_executor.py      # REAL AWS actions (ECS/RDS/EC2/Lambda/SFN/Glue)
-│   ├── approval_store.py            # SQLite - pending human-approval tokens
-│   ├── audit_store.py               # SQLite - remediation audit trail
+│   ├── approval_store.py            # PostgreSQL - pending human-approval tokens
+│   ├── audit_store.py               # PostgreSQL - remediation audit trail
 │   └── email_utils.py               # SMTP: routing + remediation approval emails
 ├── agents/
 │   ├── ams_orchestrator_agent.py    # AMS Orchestrator AI Agent
@@ -103,6 +103,7 @@ ams_solution/
    - `ANTHROPIC_API_KEY`
    - `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, `SERVICENOW_PASSWORD` (bare instance root URL, real decoded password - see comments in `.env.example` for common pitfalls)
    - `QDRANT_URL` (run locally: `docker run -p 6333:6333 qdrant/qdrant`)
+   - `POSTGRES_URL` (run locally: `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ams_agentic postgres`) - backs the audit trail (`common/audit_store.py`) and human-approval tokens (`common/approval_store.py`), one shared database, two tables (`audit_trail`, `approvals`), created automatically on first connect
    - SMTP settings (Gmail by default - needs an [App Password](https://myaccount.google.com/apppasswords))
    - `APPROVAL_BASE_URL` (must be reachable from wherever you open the approval email)
    - **AWS credentials** — see "AWS Prerequisites" below before enabling real remediation
@@ -235,8 +236,8 @@ Real boto3 actions: `restart_ecs_service`, `restart_ecs_task`, `restart_ecs_node
 ### Vector Database (`common/vector_db.py`, `common/sop_store.py`)
 One shared Qdrant collection for incidents (`source=incident`), job-failure outcomes (`source=job_failure`), and SOPs (`source=sop`). Both `ingest_incidents.py` and `ingest_sops.py` seed it once; the orchestrator and approval_server feed confirmed outcomes back into it continuously (`upsert_routing_feedback`, `upsert_job_remediation_feedback`).
 
-### Audit trail (`common/audit_store.py`)
-SQLite table logging every remediation decision - ticket, action, SOP, risk level, confidence, actor (`ai_auto`/`human_approved`/`human_rejected`), and result.
+### Relational database (`common/audit_store.py`, `common/approval_store.py`)
+One shared PostgreSQL database (`POSTGRES_URL`), alongside the shared Qdrant vector DB above - two tables: `audit_trail` (every remediation decision - ticket, action, SOP, risk level, confidence, actor `ai_auto`/`human_approved`/`human_rejected`, and result) and `approvals` (pending/approved/rejected/expired human-approval tokens, including the full recommended action + parameters so `approval_server.py` can execute it on click).
 
 ## Notes / assumptions
 - ServiceNow states `6`/`7` (Resolved/Closed) are the default "trustworthy" filter for incident ingestion.
