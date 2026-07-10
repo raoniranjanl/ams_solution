@@ -1,0 +1,16 @@
+# Local secrets and environment
+.env
+.claude/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+
+# Database and generated artifacts
+*.db
+approvals.db
+audit_trail.db
+
+# Editor / OS files
+.vscode/
+.DS_Store
