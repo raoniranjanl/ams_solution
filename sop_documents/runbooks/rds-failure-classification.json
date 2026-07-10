@@ -1,0 +1,51 @@
+{
+  "title": "RDS Failure Classification Guide",
+  "description": "Match the RDS event message keywords to determine failure type and appropriate action",
+  "classifications": [
+    {
+      "failure_type": "connection_exhausted",
+      "keywords": ["too many connections", "connection refused", "max_connections", "connection pool"],
+      "action": "restart_rds_instance",
+      "approval": "auto",
+      "explanation": "Rebooting the DB instance clears all connections and resets the connection pool",
+      "expected_downtime": "60-90 seconds for Single-AZ, near-zero for Multi-AZ"
+    },
+    {
+      "failure_type": "storage_full",
+      "keywords": ["storage full", "no space left", "disk full", "ENOSPC", "out of storage"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "Storage expansion requires human judgement on how much to add and cost implications",
+      "expected_downtime": "None if storage auto-scaling is enabled"
+    },
+    {
+      "failure_type": "instance_crash",
+      "keywords": ["instance crashed", "database process", "recovery mode", "innodb recovery", "restarting"],
+      "action": "restart_rds_instance",
+      "approval": "auto",
+      "explanation": "RDS will run crash recovery on reboot – safe to initiate",
+      "expected_downtime": "2-5 minutes depending on crash recovery time"
+    },
+    {
+      "failure_type": "multi_az_failover",
+      "keywords": ["Multi-AZ instance failover", "failover completed", "failover started"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "Failover is already in progress by AWS – no action needed, just monitor",
+      "expected_downtime": "60-120 seconds – already happening"
+    },
+    {
+      "failure_type": "parameter_group_error",
+      "keywords": ["parameter group", "invalid parameter", "incompatible parameters"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "Parameter group changes require careful review – wrong values can crash the DB"
+    }
+  ],
+  "fallback": {
+    "failure_type": "unknown",
+    "action": "manual_review",
+    "approval": "human",
+    "explanation": "Cannot classify failure from event message – human investigation required"
+  }
+}

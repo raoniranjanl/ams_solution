@@ -1,0 +1,58 @@
+{
+  "sop_id": "SOP-EKS-101",
+  "title": "ECS Container Crash / Node Not Ready",
+  "service": "ECS",
+  "error_type": "ECS_NODE_NOT_READY",
+  "version": "2.0",
+  "description": "Multi-step recovery for ECS task crashes and node failures. Each step refers to a diagnostic checklist file in S3 before deciding the action.",
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Check container exit code",
+      "refer_to_file": "runbooks/ecs-exit-code-guide.json",
+      "instruction": "Read the exit code from the container. Use the exit code reference file to classify the failure type.",
+      "conditions": [
+        { "if": "exit_code == 137",  "means": "OOMKilled",         "action": "scale_out_ecs",       "approval": "auto" },
+        { "if": "exit_code == 1",    "means": "Application crash", "action": "restart_ecs_service", "approval": "auto" },
+        { "if": "exit_code == 125",  "means": "Docker error",      "action": "restart_ecs_node",    "approval": "auto" },
+        { "if": "exit_code == null", "means": "Node unreachable",  "action": "restart_ecs_node",    "approval": "auto" }
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Verify cluster health before restart",
+      "refer_to_file": "runbooks/ecs-cluster-health-checklist.json",
+      "instruction": "Before restarting, verify the cluster has enough capacity. If capacity < 20%, scale out first.",
+      "conditions": [
+        { "if": "cluster_capacity_pct < 20", "action": "scale_out_ecs",       "approval": "auto"   },
+        { "if": "cluster_capacity_pct >= 20", "action": "restart_ecs_service", "approval": "auto"   },
+        { "if": "all_nodes_unhealthy",        "action": "manual_review",       "approval": "human"  }
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Post-restart verification",
+      "refer_to_file": "runbooks/ecs-post-restart-checklist.json",
+      "instruction": "After restart, check service reaches STEADY_STATE within 5 minutes. If not, escalate.",
+      "conditions": [
+        { "if": "service_stable == true",  "action": "log_success",   "approval": "auto"  },
+        { "if": "service_stable == false", "action": "manual_review", "approval": "human" }
+      ]
+    }
+  ],
+
+  "resolution_steps": [
+    "restart_ecs_service",
+    "restart_ecs_node",
+    "scale_out_ecs",
+    "manual_review"
+  ],
+  "auto_resolvable": true,
+  "risk_level": "MEDIUM",
+  "feedback_notes": "Works well for OOMKilled (exit 137) and app crashes (exit 1). Node-level failures need health check first.",
+  "escalation_contact": "platform-team@company.com",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}

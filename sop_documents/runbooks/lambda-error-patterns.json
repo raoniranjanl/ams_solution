@@ -1,0 +1,60 @@
+{
+  "title": "Lambda Error Pattern Classification Guide",
+  "description": "Match Lambda CloudWatch log error messages to determine the error pattern and appropriate remediation",
+  "patterns": [
+    {
+      "pattern": "timeout",
+      "log_keywords": ["Task timed out", "Timeout", "execution timed out", "2 DEADLINE_EXCEEDED"],
+      "action": "clear_lambda_error",
+      "approval": "auto",
+      "explanation": "Force cold start by updating env vars. If timeout recurs, increase timeout limit.",
+      "auto_fixable": true,
+      "follow_up": "If timeout recurs 3+ times, increase function timeout and check for slow external calls"
+    },
+    {
+      "pattern": "out_of_memory",
+      "log_keywords": ["Runtime exited with error", "signal: killed", "MemorySize", "memory size exceeded"],
+      "action": "restart_lambda",
+      "approval": "auto",
+      "explanation": "Force cold start. Memory increase to fix permanently requires human approval.",
+      "auto_fixable": true,
+      "follow_up": "Human should increase memory size from current setting to 2x"
+    },
+    {
+      "pattern": "dependency_error",
+      "log_keywords": ["Connection refused", "ECONNREFUSED", "getaddrinfo", "ETIMEDOUT", "ServiceUnavailable", "ThrottlingException"],
+      "action": "restart_lambda",
+      "approval": "auto",
+      "explanation": "Transient dependency failure. Cold start gets a new container with fresh connections.",
+      "auto_fixable": true,
+      "follow_up": "Check downstream service health if error recurs"
+    },
+    {
+      "pattern": "code_error",
+      "log_keywords": ["TypeError", "AttributeError", "NameError", "SyntaxError", "ImportError", "ModuleNotFoundError", "KeyError", "ValueError"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "Code-level bug. Restart will not fix it. Rollback to previous version required.",
+      "auto_fixable": false,
+      "follow_up": "Rollback Lambda alias to previous stable version"
+    },
+    {
+      "pattern": "throttle",
+      "log_keywords": ["Rate exceeded", "TooManyRequestsException", "throttling", "concurrent executions"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "Concurrency limit reached. Need to request limit increase from AWS or add SQS queue.",
+      "auto_fixable": false,
+      "follow_up": "Request Lambda concurrency limit increase via AWS Support"
+    },
+    {
+      "pattern": "permission_error",
+      "log_keywords": ["AccessDenied", "not authorized", "UnauthorizedOperation", "403"],
+      "action": "manual_review",
+      "approval": "human",
+      "explanation": "IAM permission missing. Must be fixed by adding the required permission to the role.",
+      "auto_fixable": false,
+      "follow_up": "Add missing IAM permission to Lambda execution role"
+    }
+  ]
+}

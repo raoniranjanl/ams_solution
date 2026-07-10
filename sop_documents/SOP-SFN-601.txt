@@ -1,0 +1,73 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-SFN-601
+Service  : AWS Step Functions
+Error    : State Machine Execution Failed / Timed Out
+Risk     : LOW
+Auto-Fix : YES (for transient Lambda/network failures)
+==========================================
+
+OVERVIEW
+--------
+Step Functions executions fail when a Task state (usually Lambda) throws an
+error. Classify the failure cause before retrying.
+
+STEP 1 — CLASSIFY THE FAILURE
+------------------------------
+
+  A) TRANSIENT LAMBDA / NETWORK ERROR
+     Keywords: "Lambda.ServiceException", "Lambda.AWSLambdaException",
+               "Connection", "timed out", "throttle", "ServiceUnavailable"
+     Action  : retry_step_function
+     Approval: AUTO — retry is safe if the workflow is idempotent
+
+  B) TASK FAILED (business logic)
+     Keywords: "States.TaskFailed", "RuntimeError", "ValueError",
+               "AssertionError", "business rule"
+     Action  : manual_review
+     Approval: HUMAN — application logic error, code fix needed
+
+  C) EXECUTION TIMED OUT
+     Keywords: "States.Timeout", "execution timed out"
+     Action  : manual_review
+     Approval: HUMAN — state machine timeout needs configuration change
+
+  D) HEARTBEAT TIMEOUT
+     Keywords: "States.HeartbeatTimeout"
+     Action  : retry_step_function
+     Approval: AUTO — worker may have crashed, retry is safe
+
+  E) SYSIN_INST ERROR FILE PROCESSING
+     When    : SYSIN_INST is present in the incident (not empty or N/A)
+     Action  : process_sfn_error_file
+     Approval: AUTO
+     The system will:
+       1. Look up MMSO_{SYSIN_INST} in the z0123-xc S3 bucket
+       2. Parse the XML to find which step number failed (returncode != 0)
+       3. If step < 5000  → move all files from error/ to input/ in processing bucket for reprocessing
+       4. If step >= 5000 → send escalation email to prod support team
+       5. If file not found → send alert email to concern team
+     NOTE: Use this classification ONLY when SYSIN_INST has a real value.
+           If SYSIN_INST is empty or N/A, classify using A/B/C/D above.
+
+STEP 2 — TAKE ACTION
+---------------------
+  retry_step_function    → Start a new execution of the same state machine
+                            with the original input. Safe only if idempotent.
+
+  process_sfn_error_file → Automated SYSIN_INST file check and remediation.
+                            Reads MMSO XML from z0123-xc, checks failed step,
+                            moves files or escalates based on step threshold.
+
+  manual_review          → Alert team with:
+                             - State machine ARN
+                             - Failed state name
+                             - Cause and error message
+                            Escalate to: platform-team@company.com
+
+ALLOWED ACTIONS
+---------------
+  - retry_step_function
+  - process_sfn_error_file
+  - manual_review
+==========================================

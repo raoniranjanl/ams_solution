@@ -1,0 +1,37 @@
+{
+  "title": "EC2 Status Check Failure Guide",
+  "description": "EC2 has two status checks. The type of failure determines the correct recovery action.",
+  "status_checks": [
+    {
+      "check_type": "system_status_failed",
+      "meaning": "AWS infrastructure problem – hardware failure, network connectivity issue, power loss on the physical host",
+      "owned_by": "AWS",
+      "action": "stop_start_ec2",
+      "approval": "auto",
+      "explanation": "Stop-start moves the instance to a NEW physical host. Reboot stays on the same host (won't fix hardware issues).",
+      "warning": "Stop-start changes the public IP if not using Elastic IP"
+    },
+    {
+      "check_type": "instance_status_failed",
+      "meaning": "OS or software problem – kernel panic, corrupted filesystem, failed OS services",
+      "owned_by": "Customer",
+      "action": "restart_ec2_instance",
+      "approval": "auto",
+      "explanation": "Reboot resets the OS. Usually fixes kernel issues and stuck processes.",
+      "warning": "If reboot fails, the OS may be corrupted and instance replacement from AMI is needed"
+    },
+    {
+      "check_type": "both_failed",
+      "meaning": "Both AWS hardware AND instance OS have failed",
+      "owned_by": "Both",
+      "action": "stop_start_ec2",
+      "approval": "human",
+      "explanation": "Serious failure. Stop-start to new host, then check if OS recovers.",
+      "warning": "High chance of data loss if instance store volumes used. Confirm before acting."
+    }
+  ],
+  "asg_guidance": {
+    "in_asg": "If the instance is in an Auto Scaling Group, terminate it instead of rebooting. The ASG will launch a fresh replacement automatically.",
+    "standalone": "If standalone instance, reboot or stop-start as per status check type above."
+  }
+}

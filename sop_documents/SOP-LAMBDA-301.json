@@ -1,0 +1,57 @@
+{
+  "sop_id": "SOP-LAMBDA-301",
+  "title": "Lambda Error Rate Spike – Root Cause Diagnosis and Fix",
+  "service": "LAMBDA",
+  "error_type": "LAMBDA_ERROR_SPIKE",
+  "version": "2.0",
+  "description": "Diagnose Lambda errors by reading error pattern guide from S3. Different error patterns require different actions.",
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Classify Lambda error pattern",
+      "refer_to_file": "runbooks/lambda-error-patterns.json",
+      "instruction": "Check CloudWatch logs for error pattern. Match against the error pattern guide to classify.",
+      "conditions": [
+        { "if": "error_pattern == 'timeout'",          "action": "clear_lambda_error",  "approval": "auto",  "note": "Force cold start, may also need timeout increase" },
+        { "if": "error_pattern == 'out_of_memory'",    "action": "restart_lambda",      "approval": "auto",  "note": "Restart; memory increase requires human approval" },
+        { "if": "error_pattern == 'dependency_error'", "action": "restart_lambda",      "approval": "auto",  "note": "Transient dependency failure – cold start fixes it" },
+        { "if": "error_pattern == 'code_error'",       "action": "manual_review",       "approval": "human", "note": "Code bug – cannot auto-fix, rollback needed" },
+        { "if": "error_pattern == 'throttle'",         "action": "manual_review",       "approval": "human", "note": "Concurrency limit hit – needs limit increase" }
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Check if previous version is stable",
+      "refer_to_file": "runbooks/lambda-version-history.json",
+      "instruction": "Before restart, check if a previous stable version exists. If yes and current version has code errors, rollback instead of restart.",
+      "conditions": [
+        { "if": "previous_stable_version_exists == true && error_pattern == 'code_error'", "action": "manual_review", "approval": "human", "note": "Rollback to previous version" },
+        { "if": "previous_stable_version_exists == false",                                 "action": "restart_lambda", "approval": "auto", "note": "No version to rollback to – restart only" }
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Monitor error rate after action",
+      "refer_to_file": "runbooks/lambda-recovery-checklist.json",
+      "instruction": "After restart, monitor error rate for 2 minutes. If error rate does not drop below 5%, escalate.",
+      "conditions": [
+        { "if": "error_rate_pct < 5",  "action": "log_success",   "approval": "auto"  },
+        { "if": "error_rate_pct >= 5", "action": "manual_review", "approval": "human", "note": "Error persists post-restart – code issue likely" }
+      ]
+    }
+  ],
+
+  "resolution_steps": [
+    "restart_lambda",
+    "clear_lambda_error",
+    "manual_review"
+  ],
+  "auto_resolvable": true,
+  "risk_level": "LOW",
+  "feedback_notes": "Timeout and dependency errors are safe to auto-restart. Code errors always need human rollback.",
+  "escalation_contact": "dev-team@company.com",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}

@@ -1,0 +1,38 @@
+{
+  "title": "ECS Cluster Health Pre-Restart Checklist",
+  "description": "Run these checks BEFORE restarting any ECS service or node to avoid making things worse",
+  "checks": [
+    {
+      "check": "cluster_capacity",
+      "how": "Call ecs:DescribeClusters and check registeredContainerInstancesCount vs runningTasksCount",
+      "thresholds": {
+        "safe_to_restart":    "capacity_pct >= 40",
+        "scale_first":        "capacity_pct between 20 and 40",
+        "do_not_restart":     "capacity_pct < 20 – cluster is nearly full, restart will cause cascading failures"
+      }
+    },
+    {
+      "check": "other_services_healthy",
+      "how": "Call ecs:DescribeServices for all services in the cluster",
+      "thresholds": {
+        "safe":    "all other services in STEADY_STATE",
+        "caution": "1-2 other services in non-steady state – proceed with care",
+        "stop":    "3+ services degraded – cluster-wide issue, escalate immediately"
+      }
+    },
+    {
+      "check": "recent_deployments",
+      "how": "Check if a deployment happened in the last 10 minutes",
+      "thresholds": {
+        "safe":    "no recent deployment – failure is organic",
+        "caution": "recent deployment – this crash may be caused by the new version, consider rollback instead of restart"
+      }
+    }
+  ],
+  "decision": {
+    "all_checks_safe":    { "action": "restart_ecs_service", "approval": "auto"  },
+    "capacity_low":       { "action": "scale_out_ecs",       "approval": "auto"  },
+    "cluster_degraded":   { "action": "manual_review",       "approval": "human" },
+    "bad_deployment":     { "action": "manual_review",       "approval": "human", "note": "Rollback the deployment instead" }
+  }
+}

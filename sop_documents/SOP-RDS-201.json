@@ -1,0 +1,58 @@
+{
+  "sop_id": "SOP-RDS-201",
+  "title": "RDS Instance Failure – Diagnosis and Recovery",
+  "service": "RDS",
+  "error_type": "RDS_FAILURE",
+  "version": "2.0",
+  "description": "Step-by-step RDS recovery. Each step refers to a diagnostic file in S3 to classify the failure before acting.",
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Classify RDS failure type",
+      "refer_to_file": "runbooks/rds-failure-classification.json",
+      "instruction": "Read the RDS event message and match against the failure classification guide to determine failure category.",
+      "conditions": [
+        { "if": "failure_type == 'connection_exhausted'", "action": "restart_rds_instance", "approval": "auto",  "note": "Reboot clears connection pool" },
+        { "if": "failure_type == 'storage_full'",         "action": "manual_review",        "approval": "human", "note": "Storage expansion needs human approval" },
+        { "if": "failure_type == 'instance_crash'",       "action": "restart_rds_instance", "approval": "auto",  "note": "Safe to reboot" },
+        { "if": "failure_type == 'multi_az_failover'",    "action": "manual_review",        "approval": "human", "note": "Failover already in progress, monitor only" },
+        { "if": "failure_type == 'unknown'",              "action": "manual_review",        "approval": "human", "note": "Cannot determine cause, escalate" }
+      ]
+    },
+    {
+      "step": 2,
+      "name": "Check if Multi-AZ is enabled before rebooting",
+      "refer_to_file": "runbooks/rds-multiaz-check.json",
+      "instruction": "If Multi-AZ is enabled, reboot with failover to avoid downtime. If single-AZ, standard reboot causes ~60s outage.",
+      "conditions": [
+        { "if": "multi_az == true",  "action": "restart_rds_instance", "approval": "auto",  "note": "Reboot with failover – zero downtime" },
+        { "if": "multi_az == false", "action": "restart_rds_instance", "approval": "human", "note": "Single-AZ reboot causes downtime – confirm with team" }
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Verify connectivity after reboot",
+      "refer_to_file": "runbooks/rds-post-reboot-checklist.json",
+      "instruction": "After reboot, verify instance status is Available and application can connect within 3 minutes.",
+      "conditions": [
+        { "if": "status == 'available' && app_connected == true",  "action": "log_success",   "approval": "auto"  },
+        { "if": "status == 'available' && app_connected == false", "action": "manual_review", "approval": "human", "note": "DB up but app cannot connect – check security groups" },
+        { "if": "status != 'available'",                           "action": "manual_review", "approval": "human", "note": "DB did not recover – engage AWS Support" }
+      ]
+    }
+  ],
+
+  "resolution_steps": [
+    "restart_rds_instance",
+    "reboot_rds",
+    "manual_review"
+  ],
+  "auto_resolvable": true,
+  "risk_level": "MEDIUM",
+  "feedback_notes": "Connection exhaustion most common cause. Multi-AZ failover reboot is zero-downtime.",
+  "escalation_contact": "dba-team@company.com",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}
