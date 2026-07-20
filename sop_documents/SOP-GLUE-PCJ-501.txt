@@ -1,0 +1,63 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID         : SOP-GLUE-PCJ-501
+Service        : S3 (Product Catalog Glue job)
+Job            : product-catalog-glue-job
+Keyword Bucket : product-catalog-glue-job-654654277749 (folders: input/, processed/, error/)
+Error          : Product Catalog Glue Job Failed - Error File Present
+Risk           : LOW
+Auto-Fix       : NO (always requires human intervention)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers failures of the "product-catalog-glue-job" Glue job.
+Like the Enrollments MMS job (SOP-EAM-MMSO-701), this job is diagnosed
+from S3, not CloudWatch: when a run fails, the job moves the file it
+could not process into the error/ folder of its own bucket,
+product-catalog-glue-job-654654277749. The presence of ANY file in that
+error/ folder is itself the failure signal - there is no step number or
+log file to parse, and no safe automated fix for this job. Every match
+requires a human to look at the file and the job run before deciding
+what to do next.
+
+MATCH RULE — READ THIS CAREFULLY
+---------------------------------
+Check the error/ folder of product-catalog-glue-job-654654277749 for
+any files. This is a plain presence check, not a diagnosis of WHY the
+job failed - if one or more files are sitting in error/, that alone is
+enough to trigger human intervention. There is no threshold, step
+number, or file-content keyword to match against.
+
+Example (real event - MATCHES this rule):
+    Bucket: product-catalog-glue-job-654654277749
+    Folder: error/
+    Files : product_catalog_20260716.csv
+  -> One file present in error/ -> action: manual_review, HUMAN.
+
+STEP 1 — CHECK THE ERROR FOLDER
+---------------------------------
+
+  One or more files exist in error/
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Any file landing in error/ means the job failed and
+               left unprocessed data behind. This job has no safe
+               automated fix (no retry action, no file-move action) -
+               a human must inspect the file and the job run before
+               deciding how to proceed.
+
+STEP 2 — NOTIFY
+-----------------
+Send a human-intervention email stating that a file is present in the
+error/ folder of product-catalog-glue-job-654654277749 and needs manual
+review. Do not attempt to move, delete, or reprocess the file
+automatically - this SOP has no auto-remediation action.
+
+  Escalate to: data-engineering@company.com
+
+SUMMARY
+-------
+  error/ folder has one or more files -> manual_review (human) - send
+                                          notification email
+==========================================

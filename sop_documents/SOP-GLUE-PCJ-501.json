@@ -1,0 +1,43 @@
+{
+  "sop_id": "SOP-GLUE-PCJ-501",
+  "title": "Job Failure - product-catalog-glue-job (error file present)",
+  "service": "S3",
+  "error_type": "S3_BATCH_JOB_FAILURE",
+  "version": "1.0",
+  "job_name": "product-catalog-glue-job",
+  "error_bucket": "",
+  "keyword_bucket": "product-catalog-glue-job-654654277749",
+  "description": "Standard remediation for the product-catalog-glue-job. This job is diagnosed entirely from S3, not CloudWatch: when a run fails, the failed file is moved into the error/ folder of product-catalog-glue-job-654654277749. The presence of any file in that error/ folder is itself the failure signal - there is no step number or log content to parse. This job has no safe auto-remediation action; every match requires a human to review the file in error/ and decide how to proceed.",
+
+  "match_rule": "Check whether the keyword bucket's (product-catalog-glue-job-654654277749) error/ folder currently contains one or more files. This is a plain presence check, not a diagnosis of the failure's root cause - any file found in error/ is sufficient to match. There is no step number, log file, or keyword content to evaluate.",
+
+  "example_log_events": [
+    {
+      "description": "A file landed in the error/ folder after a failed run - matches the rule",
+      "raw_event": "Bucket: product-catalog-glue-job-654654277749\nFolder: error/\nFiles: product_catalog_20260716.csv",
+      "matched_action": "manual_review",
+      "why": "One or more files are present in error/, which alone is enough to trigger human intervention for this job - there is no auto-remediation action to attempt first."
+    }
+  ],
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Check the product-catalog-glue-job error/ folder for pending files",
+      "instruction": "List the error/ folder of the keyword bucket (product-catalog-glue-job-654654277749). If it contains one or more files, human intervention is required.",
+      "conditions": [
+        { "if": "one or more files exist in the keyword bucket's error/ folder", "action": "manual_review", "approval": "human", "note": "Any file present in error/ means the job failed and left unprocessed data behind. This job has no safe automated fix - send a human-intervention email stating that a file is present in the error folder and needs manual review." }
+      ]
+    }
+  ],
+
+  "resolution_steps": ["manual_review"],
+  "auto_resolvable": false,
+  "risk_level": "LOW",
+  "blocked_actions": [],
+  "escalation_contact": "data-engineering@company.com",
+  "feedback_notes": "Unlike SOP-EAM-MMSO-701, this job has no step-number threshold and no safe auto-retry/file-move action - the mere presence of a file in error/ is sufficient to require human review, by design (auto_resolvable is false so every match always routes to a human regardless of confidence). Do not add an automated retry or file-move action for this job without updating this SOP and getting sign-off, since this SOP only detects that a file is present, not why the job failed.",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}
