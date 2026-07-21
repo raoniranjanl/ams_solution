@@ -449,8 +449,7 @@ confidence, risk_level, rationale, requires_human_approval, insufficient_informa
                 missing_bits.append("no CloudWatch logs")
             rationale = result.get("rationale") or (
                 "I do not have enough information to recommend a remediation action confidently "
-                f"({', '.join(missing_bits) if missing_bits else 'the available SOP/log evidence did not '
-                'resolve to a clear action'})."
+                f"({', '.join(missing_bits) if missing_bits else 'the available SOP/log evidence did not resolve to a clear action'})."
             )
         else:
             confidence = float(result.get("confidence", 0.0))

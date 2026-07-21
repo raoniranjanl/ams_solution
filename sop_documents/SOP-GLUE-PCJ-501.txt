@@ -2,8 +2,8 @@
 STANDARD OPERATING PROCEDURE
 SOP ID         : SOP-GLUE-PCJ-501
 Service        : S3 (Product Catalog Glue job)
-Job            : product-catalog-glue-job
-Keyword Bucket : product-catalog-glue-job-654654277749 (folders: input/, processed/, error/)
+Job            : eam-transformer-glue-job
+Keyword Bucket : fettommskeywordbucket-654654277749 (folders: input/, processed/, error/)
 Error          : Product Catalog Glue Job Failed - Error File Present
 Risk           : LOW
 Auto-Fix       : NO (always requires human intervention)
@@ -11,34 +11,55 @@ Auto-Fix       : NO (always requires human intervention)
 
 OVERVIEW
 --------
-This SOP covers failures of the "product-catalog-glue-job" Glue job.
+This SOP covers failures of the "eam-transformer-glue-job" Glue job.
 Like the Enrollments MMS job (SOP-EAM-MMSO-701), this job is diagnosed
 from S3, not CloudWatch: when a run fails, the job moves the file it
 could not process into the error/ folder of its own bucket,
-product-catalog-glue-job-654654277749. The presence of ANY file in that
+fettommskeywordbucket-654654277749. The presence of ANY file in that
 error/ folder is itself the failure signal - there is no step number or
-log file to parse, and no safe automated fix for this job. Every match
-requires a human to look at the file and the job run before deciding
-what to do next.
+log file to parse, and no safe automated fix for this job. Once a file's
+presence is confirmed, its FORMAT is also checked: this job only accepts
+.csv, so a non-.csv file gets a distinct wrong-format notification email
+instead of the generic review email. Every match still requires a human
+to look at the file and the job run before deciding what to do next.
 
 MATCH RULE — READ THIS CAREFULLY
 ---------------------------------
-Check the error/ folder of product-catalog-glue-job-654654277749 for
+Check the error/ folder of fettommskeywordbucket-654654277749 for
 any files. This is a plain presence check, not a diagnosis of WHY the
 job failed - if one or more files are sitting in error/, that alone is
-enough to trigger human intervention. There is no threshold, step
-number, or file-content keyword to match against.
+enough to trigger human intervention. There is no threshold or step
+number to match against. Once presence is confirmed, check the file's
+extension: a file that is NOT .csv is a distinct match from a file that
+IS .csv - see STEP 1 below.
 
-Example (real event - MATCHES this rule):
-    Bucket: product-catalog-glue-job-654654277749
+Example (wrong format - MATCHES the wrong-format rule):
+    Bucket: fettommskeywordbucket-654654277749
+    Folder: error/
+    Files : product_catalog_20260716.dat
+  -> One file present in error/ AND it is NOT .csv -> action:
+     manual_review, HUMAN, with a wrong-format notification email
+     (not the generic review email).
+
+Example (correct format - MATCHES the generic review rule):
+    Bucket: fettommskeywordbucket-654654277749
     Folder: error/
     Files : product_catalog_20260716.csv
-  -> One file present in error/ -> action: manual_review, HUMAN.
+  -> One file present in error/ AND it IS .csv -> action: manual_review,
+     HUMAN, with the generic job-failure review email.
 
-STEP 1 — CHECK THE ERROR FOLDER
----------------------------------
+STEP 1 — CHECK THE ERROR FOLDER, THEN THE FORMAT
+---------------------------------------------------
 
-  One or more files exist in error/
+  A) One or more files exist in error/ AND at least one is NOT .csv
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Wrong file format - this job only accepts .csv. This is
+               a data-entry mistake the uploader can fix themselves,
+               not necessarily a job-logic issue, so it gets a more
+               specific notification than the generic review email.
+
+  B) One or more files exist in error/ AND all of them are .csv
      Action  : manual_review
      Approval: HUMAN
      Why     : Any file landing in error/ means the job failed and
@@ -49,15 +70,25 @@ STEP 1 — CHECK THE ERROR FOLDER
 
 STEP 2 — NOTIFY
 -----------------
-Send a human-intervention email stating that a file is present in the
-error/ folder of product-catalog-glue-job-654654277749 and needs manual
-review. Do not attempt to move, delete, or reprocess the file
-automatically - this SOP has no auto-remediation action.
+  A) Wrong format (STEP 1.A matched): send an email stating that the
+     file uploaded to the error/ folder of
+     fettommskeywordbucket-654654277749 is in the wrong format, and
+     asking for a .csv file to be uploaded to proceed further.
+
+  B) Correct format (STEP 1.B matched): send the generic
+     human-intervention email stating that a file is present in the
+     error/ folder of fettommskeywordbucket-654654277749 and needs
+     manual review.
+
+  In both cases, do not attempt to move, delete, or reprocess the file
+  automatically - this SOP has no auto-remediation action.
 
   Escalate to: data-engineering@company.com
 
 SUMMARY
 -------
-  error/ folder has one or more files -> manual_review (human) - send
-                                          notification email
+  error/ has file(s), at least one NOT .csv -> manual_review (human) -
+                                                wrong-format email
+  error/ has file(s), all of them .csv       -> manual_review (human) -
+                                                generic review email
 ==========================================

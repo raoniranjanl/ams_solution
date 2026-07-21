@@ -1,32 +1,39 @@
 {
   "sop_id": "SOP-GLUE-PCJ-501",
-  "title": "Job Failure - product-catalog-glue-job (error file present)",
+  "title": "Job Failure - eam-transformer-glue-job (error file present)",
   "service": "S3",
   "error_type": "S3_BATCH_JOB_FAILURE",
   "version": "1.0",
-  "job_name": "product-catalog-glue-job",
+  "job_name": "eam-transformer-glue-job",
   "error_bucket": "",
-  "keyword_bucket": "product-catalog-glue-job-654654277749",
-  "description": "Standard remediation for the product-catalog-glue-job. This job is diagnosed entirely from S3, not CloudWatch: when a run fails, the failed file is moved into the error/ folder of product-catalog-glue-job-654654277749. The presence of any file in that error/ folder is itself the failure signal - there is no step number or log content to parse. This job has no safe auto-remediation action; every match requires a human to review the file in error/ and decide how to proceed.",
+  "keyword_bucket": "fettommskeywordbucket-654654277749",
+  "description": "Standard remediation for the eam-transformer-glue-job. This job is diagnosed entirely from S3, not CloudWatch: when a run fails, the failed file is moved into the error/ folder of fettommskeywordbucket-654654277749. The presence of any file in that error/ folder is itself the failure signal - there is no step number or log content to parse. Once a file is confirmed present, its extension is also checked: this job only accepts .csv, so a non-.csv file present in error/ is classified separately (wrong-format notification) from a .csv file present in error/ (generic job-failure review). This job has no safe auto-remediation action either way; every match requires a human to review and decide how to proceed.",
 
-  "match_rule": "Check whether the keyword bucket's (product-catalog-glue-job-654654277749) error/ folder currently contains one or more files. This is a plain presence check, not a diagnosis of the failure's root cause - any file found in error/ is sufficient to match. There is no step number, log file, or keyword content to evaluate.",
+  "match_rule": "Check whether the keyword bucket's (fettommskeywordbucket-654654277749) error/ folder currently contains one or more files - this alone is the failure signal, not a diagnosis of root cause. Once one or more files are confirmed present, check their file extension: if any file present is NOT .csv, that is a distinct match (wrong file format) from the case where all files present are .csv. There is no step number or log file to evaluate - only presence, then extension.\n\nExample (wrong format - MATCHES the wrong-format rule): Bucket: fettommskeywordbucket-654654277749, Folder: error/, Files: product_catalog_20260716.dat -> one file present and it is NOT .csv -> action: manual_review, HUMAN, with a wrong-format notification email asking for a .csv file to be uploaded to proceed.",
 
   "example_log_events": [
     {
-      "description": "A file landed in the error/ folder after a failed run - matches the rule",
-      "raw_event": "Bucket: product-catalog-glue-job-654654277749\nFolder: error/\nFiles: product_catalog_20260716.csv",
+      "description": "Correct format - a .csv file landed in the error/ folder after a failed run (matches the generic review rule)",
+      "raw_event": "Bucket: fettommskeywordbucket-654654277749\nFolder: error/\nFiles: product_catalog_20260716.csv",
       "matched_action": "manual_review",
-      "why": "One or more files are present in error/, which alone is enough to trigger human intervention for this job - there is no auto-remediation action to attempt first."
+      "why": "One or more files are present in error/ and all of them are .csv (the expected format) - the failure is job-related, not a format mistake, so this triggers the generic human-intervention review."
+    },
+    {
+      "description": "Wrong format - a non-.csv file landed in the error/ folder (matches the wrong-format rule)",
+      "raw_event": "Bucket: fettommskeywordbucket-654654277749\nFolder: error/\nFiles: product_catalog_20260716.dat",
+      "matched_action": "manual_review",
+      "why": "One or more files are present in error/ and at least one of them is NOT .csv - this job only accepts .csv, so instead of the generic review notice, send a wrong-format email stating the format is incorrect and asking for a .csv file to be uploaded to proceed."
     }
   ],
 
   "decision_tree": [
     {
       "step": 1,
-      "name": "Check the product-catalog-glue-job error/ folder for pending files",
-      "instruction": "List the error/ folder of the keyword bucket (product-catalog-glue-job-654654277749). If it contains one or more files, human intervention is required.",
+      "name": "Check the eam-transformer-glue-job error/ folder for pending files, then check their format",
+      "instruction": "List the error/ folder of the keyword bucket (fettommskeywordbucket-654654277749). If it contains one or more files, check each file's extension. Apply the matching condition below, wrong-format first.",
       "conditions": [
-        { "if": "one or more files exist in the keyword bucket's error/ folder", "action": "manual_review", "approval": "human", "note": "Any file present in error/ means the job failed and left unprocessed data behind. This job has no safe automated fix - send a human-intervention email stating that a file is present in the error folder and needs manual review." }
+        { "if": "one or more files exist in the keyword bucket's error/ folder AND at least one of them has an extension other than .csv", "action": "manual_review", "approval": "human", "note": "Wrong file format detected in error/ - this job only accepts .csv. Send a human-notification email stating that the uploaded file is in the wrong format and asking for a .csv file to be uploaded to proceed. Do not send the generic job-failure review email for this case - the format mismatch is the more specific and more useful signal." },
+        { "if": "one or more files exist in the keyword bucket's error/ folder AND all of them are .csv", "action": "manual_review", "approval": "human", "note": "Any file present in error/ means the job failed and left unprocessed data behind. This job has no safe automated fix - send a human-intervention email stating that a file is present in the error folder and needs manual review." }
       ]
     }
   ],
@@ -36,7 +43,7 @@
   "risk_level": "LOW",
   "blocked_actions": [],
   "escalation_contact": "data-engineering@company.com",
-  "feedback_notes": "Unlike SOP-EAM-MMSO-701, this job has no step-number threshold and no safe auto-retry/file-move action - the mere presence of a file in error/ is sufficient to require human review, by design (auto_resolvable is false so every match always routes to a human regardless of confidence). Do not add an automated retry or file-move action for this job without updating this SOP and getting sign-off, since this SOP only detects that a file is present, not why the job failed.",
+  "feedback_notes": "Unlike SOP-EAM-MMSO-701, this job has no step-number threshold and no safe auto-retry/file-move action - the mere presence of a file in error/ is sufficient to require human review, by design (auto_resolvable is false so every match always routes to a human regardless of confidence). File format (.csv required) is the one sub-classification this SOP does make: a non-.csv file present in error/ gets a distinct wrong-format notification email instead of the generic review email, since that's a data-entry mistake the uploader can fix themselves rather than a job-logic issue needing investigation. Do not add an automated retry or file-move action for this job without updating this SOP and getting sign-off.",
   "success_count": 0,
   "failure_count": 0,
   "manual_intervention_count": 0
