@@ -46,6 +46,7 @@ class ApprovalRecord:
     expires_at: str
     # routing-specific
     assignment_group: Optional[str] = None
+    sys_created_on: Optional[str] = None  # ticket's original creation time, for roster lookups
     # remediation-specific
     action: Optional[str] = None
     action_parameters: Dict[str, str] = field(default_factory=dict)
@@ -67,6 +68,7 @@ _OPTIONAL_COLUMNS = (
     ("short_description", "TEXT"),
     ("description", "TEXT"),
     ("cmdb_ci_name", "TEXT"),
+    ("sys_created_on", "TEXT"),
 )
 
 
@@ -109,6 +111,7 @@ class ApprovalStore:
         job_name: Optional[str] = None,
         sop_id: Optional[str] = None, risk_level: Optional[str] = None,
         short_description: str = "", description: str = "", cmdb_ci_name: Optional[str] = None,
+        sys_created_on: Optional[str] = None,
         ttl_hours: int = 72,
     ) -> str:
         token = secrets.token_urlsafe(32)
@@ -122,13 +125,13 @@ class ApprovalStore:
                         (token, kind, ticket_number, sys_id, table_name, assignment_group,
                          action, action_parameters, job_name, sop_id, risk_level,
                          confidence, rationale, short_description, description, cmdb_ci_name,
-                         status, created_at, expires_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                         sys_created_on, status, created_at, expires_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
                     """,
                     (token, kind, ticket_number, sys_id, table, assignment_group,
                      action, json.dumps(action_parameters or {}), job_name, sop_id, risk_level,
                      confidence, rationale, short_description, description, cmdb_ci_name,
-                     now.isoformat(), expires.isoformat()),
+                     sys_created_on, now.isoformat(), expires.isoformat()),
                 )
             conn.commit()
         return token
@@ -161,6 +164,7 @@ class ApprovalStore:
             short_description=row["short_description"] or "",
             description=row["description"] or "",
             cmdb_ci_name=row["cmdb_ci_name"],
+            sys_created_on=row["sys_created_on"],
             status=row["status"],
             created_at=row["created_at"],
             expires_at=row["expires_at"],

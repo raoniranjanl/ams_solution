@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 INCIDENT_FIELDS = (
     "sys_id,number,sys_class_name,short_description,description,"
     "cmdb_ci,cmdb_ci.name,assignment_group,assignment_group.name,"
+    "assigned_to,assigned_to.name,sys_created_on,"
     "priority,state,close_notes"
 )
 
@@ -84,9 +85,10 @@ class ServiceNowClient:
     Minimal wrapper for the operations the AMS solution needs:
       - fetch new/unassigned incidents and service requests
       - fetch a single ticket
-      - update the assignment group (L2 routing) on an incident
+      - update the assignment group (L2 routing) and/or assignee on an incident
       - add a work note
       - resolve an assignment-group name to its sys_id
+      - resolve a user's name to its sys_id (for setting "Assigned to")
       - bulk-fetch historical/closed incidents for vector DB ingestion
 
     NOTE: username/password below are PLACEHOLDERS. Wire real credentials
@@ -250,14 +252,109 @@ class ServiceNowClient:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10),
            retry=retry_if_exception_type((ServiceNowConnectionError,)), reraise=True)
-    def update_assignment_group(self, sys_id: str, group_name: str, table: str = "incident") -> bool:
-        """Update the L2 assignment group on an incident via a REST PATCH call."""
+    def get_user_sys_id(self, user_name: str) -> Optional[str]:
+        """Resolve a human-readable user name (roster 'Member' value) to a
+        sys_user sys_id, so it can be written into the 'assigned_to' field.
+
+        sys_user.name in ServiceNow is a computed display field (first_name
+        + last_name, sometimes with a middle name or different ordering),
+        so an exact match against the roster spelling can miss even when
+        the user genuinely exists. Strategy:
+          1. Exact match on `name`.
+          2. CONTAINS match on `name` (handles extra whitespace, a middle
+             name, or trailing text).
+          3. Word-order-swapped exact match (handles "Last First" vs
+             "First Last" - e.g. roster rows like "Roy Sayandev" where
+             ServiceNow stores "Sayandev Roy").
+        If none of these find exactly one match, logs whatever candidates
+        turned up (if any) so the mismatch is easy to diagnose, and returns
+        None rather than guessing.
+        """
+        user_name = user_name.strip()
+
+        def _search(query: str, limit: int = 5):
+            params = {"sysparm_query": query, "sysparm_fields": "sys_id,name,user_name", "sysparm_limit": limit}
+            resp = self._request("GET", "/api/now/table/sys_user", params=params)
+            return resp.json().get("result", [])
+
+        # 1. Exact match.
+        results = _search(f"name={user_name}", limit=1)
+        if results:
+            return results[0]["sys_id"]
+
+        # 2. Contains match.
+        results = _search(f"nameLIKE{user_name}")
+        if len(results) == 1:
+            logger.info("Resolved '%s' -> '%s' via contains-match on sys_user.name.", user_name, results[0]["name"])
+            return results[0]["sys_id"]
+
+        # 3. Try swapping word order (roster "Last First" vs SNow "First Last", or vice versa).
+        parts = user_name.split()
+        if len(parts) >= 2 and not results:
+            swapped = " ".join(parts[::-1])
+            results = _search(f"name={swapped}", limit=1)
+            if results:
+                logger.info("Resolved '%s' -> '%s' via word-order swap.", user_name, results[0]["name"])
+                return results[0]["sys_id"]
+
+        if len(results) > 1:
+            candidates = ", ".join(f"{r['name']} ({r.get('user_name', '?')})" for r in results)
+            logger.warning(
+                "Ambiguous match for '%s' in sys_user - %d candidates found, picking none: %s",
+                user_name, len(results), candidates,
+            )
+        else:
+            logger.warning(
+                "User '%s' not found in sys_user (tried exact match, contains match, and word-order swap). "
+                "Check the roster spelling against the actual sys_user.name value in ServiceNow.",
+                user_name,
+            )
+        return None
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10),
+           retry=retry_if_exception_type((ServiceNowConnectionError,)), reraise=True)
+    def update_assignment_group(
+        self,
+        sys_id: str,
+        group_name: str,
+        table: str = "incident",
+        assigned_to: Optional[str] = None,
+    ) -> bool:
+        """Update the L2 assignment group on an incident via a REST PATCH call.
+
+        If `assigned_to` is given (a sys_user.name, e.g. the on-shift roster
+        member for this incident), it is resolved to a sys_id and written to
+        the 'assigned_to' field in the same PATCH call. If the assignment
+        group can't be resolved, nothing is updated (existing behavior). If
+        only the assignee can't be resolved, the assignment_group is still
+        updated and a warning is logged - the incident is not silently left
+        unassigned-and-unrouted.
+        """
         group_sys_id = self.get_group_sys_id(group_name)
         if not group_sys_id:
             logger.warning("Assignment group '%s' not found in sys_user_group; skipping update.", group_name)
             return False
-        self._request("PATCH", f"/api/now/table/{table}/{sys_id}", json={"assignment_group": group_sys_id})
-        logger.info("Updated %s (%s) assignment_group -> %s", table, sys_id, group_name)
+
+        payload: Dict[str, str] = {"assignment_group": group_sys_id}
+
+        if assigned_to:
+            user_sys_id = self.get_user_sys_id(assigned_to)
+            if user_sys_id:
+                payload["assigned_to"] = user_sys_id
+            else:
+                logger.warning(
+                    "Assignee '%s' not found in sys_user; updating assignment_group only for %s (%s).",
+                    assigned_to, table, sys_id,
+                )
+
+        self._request("PATCH", f"/api/now/table/{table}/{sys_id}", json=payload)
+        if "assigned_to" in payload:
+            logger.info(
+                "Updated %s (%s) assignment_group -> %s, assigned_to -> %s",
+                table, sys_id, group_name, assigned_to,
+            )
+        else:
+            logger.info("Updated %s (%s) assignment_group -> %s", table, sys_id, group_name)
         return True
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -302,6 +399,9 @@ class ServiceNowClient:
         assignment_group_name = raw.get("assignment_group.name") or (
             raw.get("assignment_group", {}) or {}
         ).get("display_value")
+        assigned_to_name = raw.get("assigned_to.name") or (
+            raw.get("assigned_to", {}) or {}
+        ).get("display_value")
 
         return Ticket(
             sys_id=raw.get("sys_id", ""),
@@ -313,6 +413,8 @@ class ServiceNowClient:
             cmdb_ci=flat("cmdb_ci"),
             cmdb_ci_name=cmdb_ci_name,
             assignment_group=assignment_group_name,
+            assigned_to=assigned_to_name,
+            sys_created_on=raw.get("sys_created_on"),
             priority=raw.get("priority"),
             state=raw.get("state"),
             raw=raw,

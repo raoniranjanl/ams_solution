@@ -18,6 +18,8 @@ class Ticket(BaseModel):
     cmdb_ci: Optional[str] = None
     cmdb_ci_name: Optional[str] = None
     assignment_group: Optional[str] = None
+    assigned_to: Optional[str] = None
+    sys_created_on: Optional[str] = None  # raw ServiceNow timestamp string, e.g. "2026-07-21 09:14:32"
     priority: Optional[str] = None
     state: Optional[str] = None
     raw: dict = Field(default_factory=dict)  # original ServiceNow payload

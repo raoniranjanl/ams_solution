@@ -26,6 +26,8 @@ real values via environment variables).
 """
 import logging
 import time
+from datetime import datetime
+from typing import Optional
 
 from common.approval_store import ApprovalStore
 from common.audit_store import AuditStore
@@ -38,6 +40,7 @@ from common.guardrails import GuardrailsValidator
 from common.llm_client import AnthropicAgentClient
 from common.models import JobFailureAssessment, Ticket
 from common.remediation_executor import RemediationExecutor
+from common.roster_client import DomainResolver, RosterClient
 from common.servicenow_client import ServiceNowClient
 from common.sop_store import SOPStore
 from common.vector_db import VectorStore
@@ -74,6 +77,7 @@ class AMSOrchestratorAgent:
         guardrails: GuardrailsValidator,
         remediation_executor: RemediationExecutor,
         audit_store: AuditStore,
+        roster_client: Optional[RosterClient] = None,
     ):
         self.settings = settings
         self.servicenow = servicenow_client
@@ -87,6 +91,53 @@ class AMSOrchestratorAgent:
         self.remediation_executor = remediation_executor
         self.audit_store = audit_store
         self.model = settings.anthropic.model_orchestrator
+
+        # Roster-based auto-assignment ("Assigned to" field). If disabled or
+        # the roster file can't be loaded, we degrade gracefully to
+        # assignment-group-only updates (previous behavior).
+        self.domain_resolver = DomainResolver(settings.roster.group_domain_map)
+        self.roster_client = roster_client
+        if self.roster_client is None and settings.roster.enabled:
+            try:
+                self.roster_client = RosterClient(
+                    settings.roster.file_path, settings.roster.sheet_name
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to load roster file '%s'; incidents will be routed to the "
+                    "assignment group only (no auto Assigned-to).", settings.roster.file_path,
+                )
+                self.roster_client = None
+
+    # ------------------------------------------------------------------
+    # Roster lookup
+    # ------------------------------------------------------------------
+    def resolve_shift_assignee(self, ticket: Ticket, assignment_group: str) -> Optional[str]:
+        """Look up who was on shift for this assignment group's roster
+        domain at the ticket's created-on time. Returns None (and logs why)
+        if roster lookup isn't possible/applicable - callers should treat
+        that as "leave assigned_to alone", not as an error."""
+        if not self.roster_client or not self.settings.roster.enabled:
+            return None
+        domain = self.domain_resolver.resolve(assignment_group)
+        if not domain:
+            logger.info(
+                "No roster domain mapped for assignment group '%s'; skipping auto-assign.",
+                assignment_group,
+            )
+            return None
+        if not ticket.sys_created_on:
+            logger.warning("Ticket %s has no sys_created_on; skipping roster auto-assign.", ticket.number)
+            return None
+        try:
+            created_at = datetime.strptime(ticket.sys_created_on, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            logger.warning(
+                "Could not parse sys_created_on '%s' for %s; skipping roster auto-assign.",
+                ticket.sys_created_on, ticket.number,
+            )
+            return None
+        return self.roster_client.get_assignee(domain, created_at)
 
     # ------------------------------------------------------------------
     # Ticket-type classification
@@ -285,6 +336,7 @@ class AMSOrchestratorAgent:
                 short_description=ticket.short_description,
                 description=ticket.description,
                 cmdb_ci_name=ticket.cmdb_ci_name,
+                sys_created_on=ticket.sys_created_on,
                 ttl_hours=self.settings.approval.token_ttl_hours,
             )
             approve_url = f"{self.settings.approval.base_url}/approve?token={token}"
@@ -309,17 +361,21 @@ class AMSOrchestratorAgent:
                 logger.exception("Failed to add low-confidence work note for %s", ticket.number)
             return  # do not auto-assign when confidence is too low
 
-        # 3. Confidence sufficient -> update L2 assignment group in ServiceNow
+        # 3. Confidence sufficient -> update L2 assignment group (and, where the
+        # roster covers this group, the "Assigned to" field) in ServiceNow.
+        shift_assignee = self.resolve_shift_assignee(ticket, routing_result.assignment_group)
         try:
             self.servicenow.update_assignment_group(
-                ticket.sys_id, routing_result.assignment_group, table=ticket.table
+                ticket.sys_id, routing_result.assignment_group, table=ticket.table,
+                assigned_to=shift_assignee,
             )
-            self.servicenow.add_work_note(
-                ticket.sys_id,
+            note = (
                 f"[AMS AI] Auto-assigned to L2 group '{routing_result.assignment_group}' "
-                f"(confidence={routing_result.confidence:.2f}). Rationale: {routing_result.rationale}",
-                table=ticket.table,
+                f"(confidence={routing_result.confidence:.2f}). Rationale: {routing_result.rationale}"
             )
+            if shift_assignee:
+                note += f" Assigned to on-shift resource '{shift_assignee}' per weekly roster."
+            self.servicenow.add_work_note(ticket.sys_id, note, table=ticket.table)
         except Exception:
             logger.exception("Failed to update assignment group for %s", ticket.number)
             return

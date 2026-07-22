@@ -27,9 +27,12 @@ import logging
 
 from flask import Flask, request
 
+from datetime import datetime
+
 from common.approval_store import ApprovalStore
 from common.audit_store import AuditStore
 from common.remediation_executor import RemediationExecutor
+from common.roster_client import DomainResolver, RosterClient
 from common.servicenow_client import ServiceNowClient
 from common.vector_db import VectorStore
 from config import get_settings
@@ -43,6 +46,40 @@ approval_store = ApprovalStore(settings.postgres.url)
 vector_store = VectorStore(settings.qdrant, settings.embedding)
 remediation_executor = RemediationExecutor()
 audit_store = AuditStore(settings.postgres.url)
+
+domain_resolver = DomainResolver(settings.roster.group_domain_map)
+roster_client = None
+if settings.roster.enabled:
+    try:
+        roster_client = RosterClient(settings.roster.file_path, settings.roster.sheet_name)
+    except Exception:
+        logger.exception(
+            "Failed to load roster file '%s'; approved routings will set the "
+            "assignment group only (no auto Assigned-to).", settings.roster.file_path,
+        )
+
+
+def _resolve_shift_assignee(record) -> str | None:
+    """Same roster lookup as the orchestrator's auto-approve path, applied
+    to a human-approved routing record (which carries sys_created_on via
+    the ticket's raw creation time captured at approval-request time)."""
+    if not roster_client:
+        return None
+    domain = domain_resolver.resolve(record.assignment_group)
+    if not domain:
+        return None
+    created_on = getattr(record, "sys_created_on", None)
+    if not created_on:
+        logger.warning("Approval record for %s has no sys_created_on; skipping roster auto-assign.",
+                        record.ticket_number)
+        return None
+    try:
+        created_at = datetime.strptime(created_on, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        logger.warning("Could not parse sys_created_on '%s' for %s; skipping roster auto-assign.",
+                        created_on, record.ticket_number)
+        return None
+    return roster_client.get_assignee(domain, created_at)
 
 app = Flask(__name__)
 
@@ -60,13 +97,17 @@ def _page(title: str, message: str, ok: bool = True) -> str:
 
 
 def _approve_routing(record) -> str:
-    servicenow_client.update_assignment_group(record.sys_id, record.assignment_group, table=record.table)
-    servicenow_client.add_work_note(
-        record.sys_id,
-        f"[AMS AI] Human approved suggested L2 group '{record.assignment_group}' via email link "
-        f"(original confidence={record.confidence:.2f}). Assignment applied.",
-        table=record.table,
+    shift_assignee = _resolve_shift_assignee(record)
+    servicenow_client.update_assignment_group(
+        record.sys_id, record.assignment_group, table=record.table, assigned_to=shift_assignee,
     )
+    note = (
+        f"[AMS AI] Human approved suggested L2 group '{record.assignment_group}' via email link "
+        f"(original confidence={record.confidence:.2f}). Assignment applied."
+    )
+    if shift_assignee:
+        note += f" Assigned to on-shift resource '{shift_assignee}' per weekly roster."
+    servicenow_client.add_work_note(record.sys_id, note, table=record.table)
     logger.info("Approved routing for %s -> %s via email link", record.ticket_number, record.assignment_group)
 
     try:
@@ -81,7 +122,8 @@ def _approve_routing(record) -> str:
         logger.exception("Failed to feed human-approved routing for %s back into the vector DB",
                           record.ticket_number)
 
-    return f"Ticket {record.ticket_number} has been assigned to <strong>{record.assignment_group}</strong>."
+    assignee_note = f" and <strong>{shift_assignee}</strong> (on-shift resource)" if shift_assignee else ""
+    return f"Ticket {record.ticket_number} has been assigned to <strong>{record.assignment_group}</strong>{assignee_note}."
 
 
 def _approve_remediation(record) -> str:

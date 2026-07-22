@@ -48,6 +48,28 @@ class ServiceNowSettings:
 
 
 @dataclass
+class RosterSettings:
+    """
+    Config for resolving the ServiceNow 'Assigned to' field from the
+    weekly shift roster (see common/roster_client.py). ROSTER_GROUP_DOMAIN_MAP
+    maps a ServiceNow assignment group name to the roster's 'Domain' column,
+    e.g. "Enrollment L2 OFFSHORE:Enrollment". Multiple pairs are comma-separated.
+    """
+    file_path: str = field(
+        default_factory=lambda: os.getenv("ROSTER_FILE_PATH", "data/Weekly_Roster.xlsx")
+    )
+    sheet_name: str = field(default_factory=lambda: os.getenv("ROSTER_SHEET_NAME", "") or None)
+    group_domain_map: dict = field(default_factory=lambda: {
+        pair.split(":", 1)[0].strip(): pair.split(":", 1)[1].strip()
+        for pair in os.getenv(
+            "ROSTER_GROUP_DOMAIN_MAP", "Enrollment L2 OFFSHORE:Enrollment L2 OFFSHORE"
+        ).split(",")
+        if ":" in pair
+    })
+    enabled: bool = field(default_factory=lambda: _bool("ROSTER_AUTO_ASSIGN_ENABLED", "true"))
+
+
+@dataclass
 class QdrantSettings:
     url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
     api_key: str = field(default_factory=lambda: os.getenv("QDRANT_API_KEY", "") or None)
@@ -172,6 +194,7 @@ class PostgresSettings:
 class Settings:
     anthropic: AnthropicSettings = field(default_factory=AnthropicSettings)
     servicenow: ServiceNowSettings = field(default_factory=ServiceNowSettings)
+    roster: RosterSettings = field(default_factory=RosterSettings)
     qdrant: QdrantSettings = field(default_factory=QdrantSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     smtp: SmtpSettings = field(default_factory=SmtpSettings)
