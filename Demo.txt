@@ -1,0 +1,16 @@
+PPT Walk through 3 minutes
+Live demo with HTML pages  5 minutes
+
+Nagendra - For demo
+Prepare- Servers should be up. All the SOP and Incidents should complete the ingestion 
+
+Explain the Demo scenario 1 and do a live demo 15
+
+Feedback and roles 
+
+Incident Router Agent Developed by Siva & Gomathi
+Remediation  Agent Developed by Nagendra
+AMS ochestrator Agent & integration with agents  Developed by Niranjan 
+
+
+

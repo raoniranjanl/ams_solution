@@ -1,0 +1,23 @@
+Service now instance :
+https://dev198124.service-now.com/login.do?user_name=admin&sys_action=sysverb_login&user_password=Gyli%2FL5i%5EO8Q
+ 
+ 
+ 
+vector 
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+ 
+ 
+posgres
+docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ams_agentic --name ams-demo-postgres postgres
+ 
+ 
+Posgres Admin console
+docker run --rm -d -p 8080:8080 --name ams-demo-adminer adminer
+ 
+ 
+ 
+One time ingestion incidents and sop
+python -m ingestion.ingest_incidents 
+python -m ingestion.ingest_sops   
+python approval_server.py # handles the approve link (Email)
+python main.py --once       # or without --once for continuous polling
