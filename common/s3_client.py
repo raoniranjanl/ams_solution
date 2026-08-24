@@ -62,8 +62,15 @@ class S3Client:
         recent = self.list_recent_objects(bucket, prefix=prefix, max_keys=1)
         if not recent:
             return None
+        return self.get_object_text(bucket, recent[0]["key"], max_bytes=max_bytes)
+
+    def get_object_text(self, bucket: str, key: str, max_bytes: Optional[int] = None) -> Optional[str]:
+        """
+        Fetches the decoded text content of a specific object key. Returns
+        None if the fetch fails for any reason (missing key, no
+        permissions, etc.) - never raises.
+        """
         max_bytes = max_bytes or self.settings.max_log_bytes
-        key = recent[0]["key"]
         try:
             s3 = get_client("s3")
             obj = s3.get_object(Bucket=bucket, Key=key)
@@ -72,6 +79,19 @@ class S3Client:
         except Exception:
             logger.warning("Could not read object '%s' from bucket '%s'.", key, bucket, exc_info=True)
             return None
+
+    def put_object_text(self, bucket: str, key: str, content: str) -> bool:
+        """
+        Writes `content` to `key`, overwriting any existing object there.
+        Returns True on success, False on any failure (never raises).
+        """
+        try:
+            s3 = get_client("s3")
+            s3.put_object(Bucket=bucket, Key=key, Body=content.encode("utf-8"))
+            return True
+        except Exception:
+            logger.warning("Could not write object '%s' to bucket '%s'.", key, bucket, exc_info=True)
+            return False
 
     def move_objects(self, bucket: str, source_prefix: str, dest_prefix: str) -> List[str]:
         """

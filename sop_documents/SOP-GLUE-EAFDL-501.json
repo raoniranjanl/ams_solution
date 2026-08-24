@@ -1,0 +1,45 @@
+{
+  "sop_id": "SOP-GLUE-EAFDL-501",
+  "title": "Glue Job Failure - enrollments-eaf-dataload-job",
+  "service": "GLUE",
+  "error_type": "GLUE_JOB_FAILURE",
+  "version": "1.0",
+  "job_name": "enrollments-eaf-dataload-job",
+  "log_group": "/aws-glue/jobs/logs-v2",
+  "description": "Standard remediation for the enrollments-eaf-dataload-job AWS Glue job. Classifies the failure from the CloudWatch 'Failure Reason' log content before acting - a member api failure referencing an undefined 'span_pbp_view' is a data-dependency error, not a transient one, so it always requires human review rather than an automatic retry.",
+
+  "match_rule": "Match on the literal substring 'member api' (case-insensitive) appearing anywhere in the log event's Failure Reason / error message text, typically combined with 'span_pbp_view' being reported as undefined (e.g. 'member api Failure: span_pbp_view undefined'). This indicates the job depends on an upstream member api / view that is missing or not yet available - a data-dependency issue, not something a blind retry would fix.",
+
+  "recommendation": "Do not auto-retry this job. Recommend that a human support analyst confirm the member api / span_pbp_view dependency is healthy (check whether the upstream view exists and is populated) before the job is rerun manually. This SOP has been flagged to route directly to a human support analyst to review the failure and decide the next step",
+
+  "example_log_events": [
+    {
+      "description": "Real GlueETLJobExceptionEvent - member api failure with span_pbp_view undefined",
+      "raw_event": "{\"Event\": \"GlueETLJobExceptionEvent\", \"Timestamp\": 1783513907401, \"Failure Reason\": \"Traceback (most recent call last):\\n  File \\\"/tmp/enrollments_eaf_dataload.py\\\", line 42, in <module>\\n    raise RuntimeError(\\nRuntimeError: member api Failure: span_pbp_view undefined\", \"script\": \"enrollments_eaf_dataload.py\"}",
+      "matched_action": "manual_review",
+      "why": "The Failure Reason references a member api failure with 'span_pbp_view' undefined - an upstream data-dependency issue, not a transient error, so this requires human review rather than an automatic retry."
+    }
+  ],
+
+  "decision_tree": [
+    {
+      "step": 1,
+      "name": "Classify the enrollments-eaf-dataload-job failure from the Failure Reason log content",
+      "instruction": "Read the 'Failure Reason' field (or equivalent error/exception text) from the job's CloudWatch log event. Check whether it references a member api failure and/or 'span_pbp_view' being undefined - see match_rule above.",
+      "conditions": [
+        { "if": "Failure Reason contains 'member api' (case-insensitive) and/or references 'span_pbp_view' as undefined", "action": "manual_review", "approval": "human", "note": "Upstream member api / view dependency failure - not transient, cannot be safely auto-retried. This has been flagged for a human support analyst to review the failure and decide the next step. The approval-request email is sent automatically as part of the human-approval flow, with the job name, run ID, and full error message." },
+        { "if": "Failure Reason does NOT reference the member api or span_pbp_view (any other error)", "action": "manual_review", "approval": "human", "note": "Not covered by this SOP's specific match rule - fall back to a human support analyst for review and decision. For generic transient/connection-refused Glue failures on other jobs, see SOP-GLUE-501 / SOP-GLUE-CETL-501 instead." }
+      ]
+    }
+  ],
+
+  "resolution_steps": ["manual_review"],
+  "auto_resolvable": false,
+  "risk_level": "LOW",
+  "blocked_actions": [],
+  "escalation_contact": "data-engineering@company.com",
+  "feedback_notes": "This job's member api / span_pbp_view failure . Every match routes straight to manual_review and is explicitly flagged for a human support analyst to review and decide the next step, which triggers the standard human-approval email. Do not add an automated retry action for this specific error signature without updating this SOP and getting sign-off from data engineering.",
+  "success_count": 0,
+  "failure_count": 0,
+  "manual_intervention_count": 0
+}

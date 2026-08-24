@@ -27,6 +27,7 @@ from typing import Callable, Dict
 from common.aws_client import get_client
 from common.models import ExecutionResult, Ticket
 from common.s3_client import S3Client
+from common.sop_store import SOPStore
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ REQUIRED_PARAMS: Dict[str, list] = {
     "manual_review": [],
     "move_keyword_files_to_input": ["keyword_bucket"],
     "no_action_required": [],
+    "export_eligible_member_hic": [],
+    "flag_member_ineligible": [],
 }
 
 
@@ -306,4 +309,42 @@ def no_action_required(params: dict, ticket: Ticket, recommendation) -> Executio
         success=True,
         message="No remediation action required - failure occurred below the step threshold with no "
                  "keyword files pending in the error folder.",
+    )
+
+
+@register("export_eligible_member_hic")
+@register("flag_member_ineligible")
+def run_member_validation_job(params: dict, ticket: Ticket, recommendation) -> ExecutionResult:
+    """
+    SOP-EAM-MEMVALID-801 (and any other SOP declaring these actions): the
+    LLM only decides THAT this SOP's job should run for this ticket - it
+    cannot read kwd file content or query Postgres itself. The actual work
+    (parsing every kwd file in the SOP's keyword_bucket, validating each
+    referenced member against the eam/facets tables, writing eligible
+    members' HIC to the bucket's input/ prefix) is the exact same
+    deterministic code used when running the job directly or via --watch -
+    see jobs/process_eam_member_kwd_files.py. Both action names route here
+    since the pass/fail decision for each member is made internally, per
+    member, by that job - not chosen up front by the LLM.
+    """
+    sop_id = recommendation.sop_id
+    if not sop_id:
+        raise ValueError(f"{recommendation.action} requires a matched SOP (recommendation.sop_id is empty)")
+
+    from jobs.process_eam_member_kwd_files import process_sop
+
+    sop_store = SOPStore(get_settings().remediation.sop_dir)
+    sop = sop_store.get(sop_id)
+    if not sop or not sop.keyword_bucket:
+        raise ValueError(f"SOP '{sop_id}' has no keyword_bucket configured - nothing to run")
+
+    eligible_hics = process_sop(sop)
+    return ExecutionResult(
+        success=True,
+        message=(
+            f"Ran {sop.sop_id} against s3://{sop.keyword_bucket}/{sop.error_prefix} - "
+            f"{len(eligible_hics)} eligible member(s) exported across per-file "
+            f"'{sop.output_filename}_<timestamp>.txt' object(s) in "
+            f"s3://{sop.keyword_bucket}/{sop.input_prefix}."
+        ),
     )

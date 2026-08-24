@@ -1,10 +1,10 @@
 ==========================================
 STANDARD OPERATING PROCEDURE
 SOP ID         : SOP-GLUE-PCJ-501
-Service        : S3 (Product Catalog Glue job)
+Service        : S3 (eam-transformer-glue-job)
 Job            : eam-transformer-glue-job
-Keyword Bucket : fettommskeywordbucket-654654277749 (folders: input/, processed/, error/)
-Error          : Product Catalog Glue Job Failed - Error File Present
+Keyword Bucket : eamtransformerbucket-01 (folders: input/, processed/, error/)
+Error          : eam-transformer-glue-job Failed - Error File Present
 Risk           : LOW
 Auto-Fix       : NO (always requires human intervention)
 ==========================================
@@ -15,7 +15,7 @@ This SOP covers failures of the "eam-transformer-glue-job" Glue job.
 Like the Enrollments MMS job (SOP-EAM-MMSO-701), this job is diagnosed
 from S3, not CloudWatch: when a run fails, the job moves the file it
 could not process into the error/ folder of its own bucket,
-fettommskeywordbucket-654654277749. The presence of ANY file in that
+eamtransformerbucket-01. The presence of ANY file in that
 error/ folder is itself the failure signal - there is no step number or
 log file to parse, and no safe automated fix for this job. Once a file's
 presence is confirmed, its FORMAT is also checked: this job only accepts
@@ -25,7 +25,7 @@ to look at the file and the job run before deciding what to do next.
 
 MATCH RULE — READ THIS CAREFULLY
 ---------------------------------
-Check the error/ folder of fettommskeywordbucket-654654277749 for
+Check the error/ folder of eamtransformerbucket-01 for
 any files. This is a plain presence check, not a diagnosis of WHY the
 job failed - if one or more files are sitting in error/, that alone is
 enough to trigger human intervention. There is no threshold or step
@@ -34,7 +34,7 @@ extension: a file that is NOT .csv is a distinct match from a file that
 IS .csv - see STEP 1 below.
 
 Example (wrong format - MATCHES the wrong-format rule):
-    Bucket: fettommskeywordbucket-654654277749
+    Bucket: eamtransformerbucket-01
     Folder: error/
     Files : product_catalog_20260716.dat
   -> One file present in error/ AND it is NOT .csv -> action:
@@ -42,7 +42,7 @@ Example (wrong format - MATCHES the wrong-format rule):
      (not the generic review email).
 
 Example (correct format - MATCHES the generic review rule):
-    Bucket: fettommskeywordbucket-654654277749
+    Bucket: eamtransformerbucket-01
     Folder: error/
     Files : product_catalog_20260716.csv
   -> One file present in error/ AND it IS .csv -> action: manual_review,
@@ -72,12 +72,12 @@ STEP 2 — NOTIFY
 -----------------
   A) Wrong format (STEP 1.A matched): send an email stating that the
      file uploaded to the error/ folder of
-     fettommskeywordbucket-654654277749 is in the wrong format, and
+     eamtransformerbucket-01 is in the wrong format, and
      asking for a .csv file to be uploaded to proceed further.
 
   B) Correct format (STEP 1.B matched): send the generic
      human-intervention email stating that a file is present in the
-     error/ folder of fettommskeywordbucket-654654277749 and needs
+     error/ folder of eamtransformerbucket-01 and needs
      manual review.
 
   In both cases, do not attempt to move, delete, or reprocess the file

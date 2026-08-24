@@ -1,0 +1,13 @@
+# Secrets - never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+
+# Local machine-specific TLS certs (e.g. antivirus MITM root export) -
+# not portable across machines, see .env's AWS_CA_BUNDLE comment
+certs/

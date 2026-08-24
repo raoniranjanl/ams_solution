@@ -8,8 +8,10 @@ The spreadsheet is expected to have one row per (domain, date, shift),
 e.g.:
 
 Domain                    Date        Shift     Start   End     Member
-Enrollment L2 OFFSHORE   2026-07-21  Shift A   07:00   15:00   Bharat Cheparthi
-Enrollment L2 OFFSHORE   2026-07-21  Shift B   15:00   23:00   Naik Kavitha Ganesh
+Enrollment L2 OFFSHORE   2026-07-23  Shift A   07:00   15:00   Bharat Cheparthi
+Enrollment L2 OFFSHORE   2026-07-23  Shift A   15:00   23:00   Naik Kavitha Ganesh
+
+Read the data from data/Weekly_Roster.xlsx based on date and shift and update in assigned to field
 
 This is used to resolve the ServiceNow "Assigned to" field: when an
 incident lands in an assignment group that maps to a roster domain, we
