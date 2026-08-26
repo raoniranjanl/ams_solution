@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS facets (
     new_member BOOLEAN NOT NULL DEFAULT FALSE,
     effective_date DATE,
     term_date DATE,
+    latest_changes_on_member_pcp BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now()
 );

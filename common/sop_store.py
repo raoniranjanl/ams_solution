@@ -64,6 +64,11 @@ class SOP:
     input_prefix: str = "input/"   # keyword_bucket prefix eligible/processed output goes to
     output_filename: str = "EAF"       # output filename PREFIX (under input_prefix) - the job appends
                                         # "_<YYYYMMDD_HHMMSS>.txt" per source file processed
+    output_bucket: str = ""            # bucket the Legacy/output files are written to (input_prefix) -
+                                        # empty = same bucket as keyword_bucket (read and write together)
+    mms_bucket: str = ""               # optional: downstream bucket fully-matching members with
+                                        # pending PCP changes get forwarded to (empty = feature off)
+    mms_input_prefix: str = "input/"   # prefix under mms_bucket the forwarded kwd file is written to
 
 
 class SOPStore:
@@ -155,6 +160,9 @@ class SOPStore:
         error_prefix = data.get("error_prefix", "error/")
         input_prefix = data.get("input_prefix", "input/")
         output_filename = data.get("output_filename", "EAF")
+        output_bucket = data.get("output_bucket", "")
+        mms_bucket = data.get("mms_bucket", "")
+        mms_input_prefix = data.get("mms_input_prefix", "input/")
 
         return SOP(
             sop_id=sop_id, title=title, service=service, error_type=error_type,
@@ -167,6 +175,7 @@ class SOPStore:
             match_rule=match_rule, decision_tree=decision_tree, example_log_events=example_log_events,
             error_bucket=error_bucket, keyword_bucket=keyword_bucket,
             error_prefix=error_prefix, input_prefix=input_prefix, output_filename=output_filename,
+            output_bucket=output_bucket, mms_bucket=mms_bucket, mms_input_prefix=mms_input_prefix,
         )
 
     @staticmethod

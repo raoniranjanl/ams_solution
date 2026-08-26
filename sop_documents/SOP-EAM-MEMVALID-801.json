@@ -1,30 +1,33 @@
 {
   "sop_id": "SOP-EAM-MEMVALID-801",
-  "title": "EAM/Facets Member Eligibility Validation - keyword file",
+  "title": "EAM/Facets Member Match Validation - keyword file",
   "service": "EAM/Facets Member Validation",
   "error_type": "MEMBER_KEYWORD_FILE_VALIDATION",
-  "version": "1.0",
+  "version": "3.0",
   "job_name": "EAM Member Validation job",
-  "keyword_bucket": "test-0v1-ioonh",
+  "keyword_bucket": "fet-to-mms-bucket",
+  "output_bucket": "eam-fct-eam-bucket",
   "error_prefix": "error/",
   "input_prefix": "input/",
-  "output_filename": "EAF",
-  "description": "Validates a member referenced by a pending keyword file against the eam and facets Postgres tables before the member's record is allowed to proceed to input/ for downstream processing. This job is diagnosed entirely from the keyword bucket's error/ prefix and two Postgres tables, not CloudWatch.",
+  "output_filename": "Legacy",
+  "mms_bucket": "fet-to-mms-bucket",
+  "mms_input_prefix": "input/",
+  "description": "Validates a member referenced by a pending keyword file against the eam and facets Postgres tables. Kwd files are READ from fet-to-mms-bucket/error/ (keyword_bucket); non-matching results are WRITTEN to eam-fct-eam-bucket/input/ (output_bucket) - two different buckets. INVERTED export rule: a member whose eam/facets records do NOT fully match is flagged - their HIC is exported for review. A member where everything matches is only logged (\"All matching\"), nothing is exported for them. SEPARATELY: any fully-matching member whose facets row still has latest_changes_on_member_pcp=false has their original kwd record forwarded verbatim back into fet-to-mms-bucket/input/ (mms_bucket - same bucket kwd files are read from, different prefix than error/) for downstream PCP processing - not gated by the export dedup ledger, so the same member is forwarded again every run until that column is updated by some other process. This job is diagnosed entirely from Postgres, not CloudWatch.",
 
-  "match_rule": "For every object present in the keyword bucket's error/ prefix (s3://test-0v1-ioonh/error/), parse it as one or more comma-separated @FIELD=\"VALUE\" records per line (e.g. RECTYPE=\"MEMD\" detail lines mixed with RECTYPE=\"MEME\" member lines). Only RECTYPE=\"MEME\" lines carry @pMEME_HEALTH_ID, so a single file may reference multiple members - process each one found. pMEME_HEALTH_ID corresponds to memberID in the eam table and to mem_health_id in the facets table - the same identifier, two column names. A member is ELIGIBLE only when ALL of the following hold: (1) a row exists in eam with member_id = pMEME_HEALTH_ID, (2) a row exists in facets with mem_health_id = pMEME_HEALTH_ID, (3) the eam row has has_active=true, planname in ('MA','MAPD'), confirmation_letter_went=true, member_exist_in_eam=true, welcome_kit_triggered=true, id_card_triggered=true, pcp_letter_went=true, and effective_date <= today <= term_date, and (4) the facets row independently passes that SAME set of checks. If any condition fails, print a console message identifying which check(s) failed and skip the member. If eligible, take the member's HIC from the facets row.",
+  "match_rule": "For every object present in the keyword bucket's error/ prefix (s3://fet-to-mms-bucket/error/), parse it as one or more comma-separated @FIELD=\"VALUE\" records per line (e.g. RECTYPE=\"MEMD\" detail lines mixed with RECTYPE=\"MEME\" member lines). Only RECTYPE=\"MEME\" lines carry @pMEME_HEALTH_ID, so a single file may reference multiple members - process each one found. pMEME_HEALTH_ID corresponds to memberID in the eam table and to mem_health_id in the facets table - the same identifier, two column names. A member FULLY MATCHES only when ALL of the following hold: (1) a row exists in eam with member_id = pMEME_HEALTH_ID, (2) a row exists in facets with mem_health_id = pMEME_HEALTH_ID, (3) the eam row has has_active=true, planname in ('MA','MAPD'), confirmation_letter_went=true, member_exist_in_eam=true, welcome_kit_triggered=true, id_card_triggered=true, pcp_letter_went=true, and effective_date <= today <= term_date, and (4) the facets row independently passes that SAME set of checks. If ALL of this holds, print a console message stating all matching and export NOTHING for this member. If ANY condition fails (including a missing row in either table), print a console message identifying what's wrong and - when a facets row exists to pull a HIC from - export that member's HIC to the OUTPUT bucket (eam-fct-eam-bucket/input/), not the keyword bucket.",
 
   "example_log_events": [
     {
-      "description": "Eligible member - all eam and facets checks pass",
+      "description": "Fully matching member - all eam and facets checks pass -> logged only, NOT exported",
       "raw_event": "kwd file content: @RECTYPE=\"MEME\",@pMEMD_UPDATE_CD=\"AP\",@pMEME_REL=\"M\",@pMEME_HEALTH_ID=\"M1001\"\neam row: has_active=true planname=MA confirmation_letter_went=true member_exist_in_eam=true welcome_kit_triggered=true id_card_triggered=true pcp_letter_went=true effective_date=2026-08-23 term_date=9999-12-31\nfacets row: hic=1A2B3C4D5E6 (same checks, all pass)",
-      "matched_action": "export_eligible_member_hic",
-      "why": "Both the eam and facets records for M1001 independently pass every required check and both dates are currently valid, so the member's HIC is exported to a new input/EAF_<timestamp>.txt file for this source kwd file."
+      "matched_action": "log_all_matching",
+      "why": "Both the eam and facets records for M1001 independently pass every required check and both dates are currently valid - console prints 'All matching for pMEME_HEALTH_ID=M1001.' and the member's HIC is NOT written anywhere."
     },
     {
-      "description": "Ineligible member - eam checks fail",
+      "description": "Non-matching member - eam checks fail -> HIC exported for review",
       "raw_event": "kwd file content: @RECTYPE=\"MEME\",@pMEMD_UPDATE_CD=\"AP\",@pMEME_REL=\"M\",@pMEME_HEALTH_ID=\"M1002\"\neam row: has_active=false confirmation_letter_went=false welcome_kit_triggered=false id_card_triggered=false",
-      "matched_action": "flag_member_ineligible",
-      "why": "The eam row for M1002 fails multiple required checks (has_active, confirmation_letter_went, welcome_kit_triggered, id_card_triggered all false), so the member is not exported and a console message names the failed checks."
+      "matched_action": "export_nonmatching_member_hic",
+      "why": "The eam row for M1002 fails multiple required checks (has_active, confirmation_letter_went, welcome_kit_triggered, id_card_triggered all false), so a console message names the failed checks AND the member's HIC is exported to s3://eam-fct-eam-bucket/input/Legacy_<timestamp>.txt for review - the OUTPUT bucket, not the fet-to-mms-bucket the kwd file was read from."
     }
   ],
 
@@ -34,7 +37,7 @@
       "name": "Look up the member referenced by the keyword file in both eam and facets",
       "instruction": "Extract pMEME_HEALTH_ID from the keyword file. Query eam.member_id and facets.mem_health_id for a matching row in each table.",
       "conditions": [
-        { "if": "no matching row exists in eam OR no matching row exists in facets", "action": "flag_member_ineligible", "approval": "auto", "note": "Member not found in one or both tables - print which table(s) had no match, skip this member." },
+        { "if": "no matching row exists in eam OR no matching row exists in facets", "action": "export_nonmatching_member_hic", "approval": "auto", "note": "Member not found in one or both tables - print which table(s) had no match. No facets row means no HIC is available to export, even though this clearly does not match." },
         { "if": "a matching row exists in BOTH eam and facets", "action": "validate_eligibility", "approval": "auto", "note": "Proceed to step 2 to check the eligibility flags/dates on both rows." }
       ]
     },
@@ -43,18 +46,18 @@
       "name": "Validate eligibility flags and date validity on both records",
       "instruction": "On EACH of the eam row and the facets row independently, check: has_active=true, planname in ('MA','MAPD'), confirmation_letter_went=true, member_exist_in_eam=true, welcome_kit_triggered=true, id_card_triggered=true, pcp_letter_went=true, and effective_date <= today <= term_date (not yet termed).",
       "conditions": [
-        { "if": "ANY check fails on the eam row OR ANY check fails on the facets row", "action": "flag_member_ineligible", "approval": "auto", "note": "Print a console message listing exactly which check(s) failed on which table(s); do not export this member." },
-        { "if": "ALL checks pass on BOTH the eam row and the facets row", "action": "export_eligible_member_hic", "approval": "auto", "note": "Take the HIC from the facets row and add it to that source kwd file's own EAF_<timestamp>.txt output object (in the keyword bucket's input/ prefix) as a single-quoted value, comma-separated with any other eligible members from the SAME source file." }
+        { "if": "ANY check fails on the eam row OR ANY check fails on the facets row", "action": "export_nonmatching_member_hic", "approval": "auto", "note": "Print a console message listing exactly which check(s) failed on which table(s), AND take the HIC from the facets row and add it to that source kwd file's own Legacy_<timestamp>.txt output object in the OUTPUT bucket (eam-fct-eam-bucket/input/, NOT the keyword bucket the file was read from) as a single-quoted value, comma-separated with any other non-matching members from the SAME source file." },
+        { "if": "ALL checks pass on BOTH the eam row and the facets row", "action": "log_all_matching", "approval": "auto", "note": "Print an 'All matching' console message for this member. Export nothing." }
       ]
     }
   ],
 
-  "resolution_steps": ["export_eligible_member_hic", "flag_member_ineligible"],
+  "resolution_steps": ["export_nonmatching_member_hic", "log_all_matching"],
   "auto_resolvable": true,
   "risk_level": "LOW",
   "blocked_actions": [],
   "escalation_contact": "data-engineering@company.com",
-  "feedback_notes": "Fully deterministic (no LLM judgment involved) once triggered: implemented in jobs/process_eam_member_kwd_files.py, common/eam_facets_store.py, and common/member_eligibility.py. Reads s3://test-0v1-ioonh/error/* - EACH source kwd file gets its OWN output object at s3://test-0v1-ioonh/input/EAF_<YYYYMMDD_HHMMSS>.txt (output_filename field is a filename PREFIX, not a full name), not one combined file. Does not move or delete the source keyword files. Two ways to trigger it: (1) directly - `python -m jobs.process_eam_member_kwd_files`, or continuously via `--watch`; (2) through a matching ServiceNow incident - the Job Remediation Agent keyword-matches this SOP from ticket text, and common/remediation_executor.py's export_eligible_member_hic/flag_member_ineligible handlers re-run this exact job (not LLM-improvised) when either action is recommended and passes guardrails. Not yet auto-triggered on S3 object-create - no event notification is configured on the bucket.",
+  "feedback_notes": "Fully deterministic (no LLM judgment involved) once triggered: implemented in jobs/process_eam_member_kwd_files.py, common/eam_facets_store.py, and common/member_eligibility.py. READS s3://fet-to-mms-bucket/error/* (keyword_bucket) - WRITES EACH source kwd file's own output object at s3://eam-fct-eam-bucket/input/Legacy_<YYYYMMDD_HHMMSS>.txt (output_bucket; output_filename field is a filename PREFIX, not a full name), not one combined file, containing only the NON-matching members' HICs from that source file. Does not move or delete the source keyword files. Two ways to trigger it: (1) directly - `python -m jobs.process_eam_member_kwd_files`, or continuously via `--watch`; (2) through a matching ServiceNow incident - the Job Remediation Agent keyword-matches this SOP from ticket text, and common/remediation_executor.py's export_nonmatching_member_hic/log_all_matching handlers re-run this exact job (not LLM-improvised) when either action is recommended and passes guardrails. Not yet auto-triggered on S3 object-create - no event notification is configured on either bucket. MMS forwarding (mms_bucket = fet-to-mms-bucket, same bucket kwd files are read from, but the input/ prefix rather than error/): once per run, ALL fully-matching members across every source file with latest_changes_on_member_pcp=false are combined into ONE file s3://fet-to-mms-bucket/input/EAF_<HHMMSS>.kwd (their original kwd lines, verbatim) - skipped entirely if none qualify. Safe: the job only ever LISTS the error/ prefix, never input/, so writing forwarded copies back into fet-to-mms-bucket/input/ cannot cause a loop.",
   "success_count": 0,
   "failure_count": 0,
   "manual_intervention_count": 0

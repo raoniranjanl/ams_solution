@@ -53,8 +53,8 @@ REQUIRED_PARAMS: Dict[str, list] = {
     "manual_review": [],
     "move_keyword_files_to_input": ["keyword_bucket"],
     "no_action_required": [],
-    "export_eligible_member_hic": [],
-    "flag_member_ineligible": [],
+    "export_nonmatching_member_hic": [],
+    "log_all_matching": [],
 }
 
 
@@ -312,20 +312,22 @@ def no_action_required(params: dict, ticket: Ticket, recommendation) -> Executio
     )
 
 
-@register("export_eligible_member_hic")
-@register("flag_member_ineligible")
+@register("export_nonmatching_member_hic")
+@register("log_all_matching")
 def run_member_validation_job(params: dict, ticket: Ticket, recommendation) -> ExecutionResult:
     """
     SOP-EAM-MEMVALID-801 (and any other SOP declaring these actions): the
     LLM only decides THAT this SOP's job should run for this ticket - it
     cannot read kwd file content or query Postgres itself. The actual work
     (parsing every kwd file in the SOP's keyword_bucket, validating each
-    referenced member against the eam/facets tables, writing eligible
-    members' HIC to the bucket's input/ prefix) is the exact same
+    referenced member against the eam/facets tables) is the exact same
     deterministic code used when running the job directly or via --watch -
-    see jobs/process_eam_member_kwd_files.py. Both action names route here
-    since the pass/fail decision for each member is made internally, per
-    member, by that job - not chosen up front by the LLM.
+    see jobs/process_eam_member_kwd_files.py. The rule is INVERTED from a
+    typical "export the good ones" pattern: a member whose eam/facets
+    records do NOT fully match gets their HIC exported (flagged for
+    review); a member where everything matches is only logged, not
+    exported. Both action names route here since that per-member decision
+    is made internally by the job, not chosen up front by the LLM.
     """
     sop_id = recommendation.sop_id
     if not sop_id:
@@ -338,12 +340,12 @@ def run_member_validation_job(params: dict, ticket: Ticket, recommendation) -> E
     if not sop or not sop.keyword_bucket:
         raise ValueError(f"SOP '{sop_id}' has no keyword_bucket configured - nothing to run")
 
-    eligible_hics = process_sop(sop)
+    flagged_hics = process_sop(sop)
     return ExecutionResult(
         success=True,
         message=(
             f"Ran {sop.sop_id} against s3://{sop.keyword_bucket}/{sop.error_prefix} - "
-            f"{len(eligible_hics)} eligible member(s) exported across per-file "
+            f"{len(flagged_hics)} non-matching member(s) exported across per-file "
             f"'{sop.output_filename}_<timestamp>.txt' object(s) in "
             f"s3://{sop.keyword_bucket}/{sop.input_prefix}."
         ),
