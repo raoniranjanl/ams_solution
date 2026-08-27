@@ -4,7 +4,7 @@ EAM/Facets member-validation keyword-file job.
 FULLY SOP-DRIVEN, INCLUDING SOP SELECTION: this job does not hardcode
 which SOP it runs. On startup it loads EVERY SOP in the library
 (common/sop_store.py, sop_documents/*.json) and picks the one whose
-keyword_bucket matches the bucket being scanned (default: fet-to-mms-bucket)
+keyword_bucket matches the bucket being scanned (default: fet-to-mms-bucket-01)
 AND whose resolution_steps declare "export_nonmatching_member_hic" (the
 action this job implements) - see find_sop_for_bucket() below. Today only
 SOP-EAM-MEMVALID-801 matches, but dropping a kwd file into a DIFFERENT
@@ -65,7 +65,8 @@ Source kwd files in error/ are not moved or deleted.
 SEPARATE MMS-FORWARDING FEATURE (only active when sop.mms_bucket is set):
 any fully-matching member (across the WHOLE run, every source file
 combined) whose facets row still has latest_changes_on_member_pcp=false
-has their original kwd line forwarded verbatim into ONE new file,
+has their original kwd record block (MEMD detail line + MEME line,
+verbatim) forwarded into ONE new file,
 s3://<mms_bucket>/<mms_input_prefix>EAF_<HHMMSS>.kwd - not written at all
 if nothing qualifies. This is independent of the export/dedup logic above
 and does NOT flip latest_changes_on_member_pcp itself, so the same member
@@ -77,7 +78,7 @@ access to the bucket. Uses the same S3Client fail-soft conventions as the
 rest of the Job Remediation Agent's S3 integration - a missing bucket or
 permissions issue means "nothing found", not a crash.
 
-Run: python -m jobs.process_eam_member_kwd_files [--bucket fet-to-mms-bucket]
+Run: python -m jobs.process_eam_member_kwd_files [--bucket fet-to-mms-bucket-01]
 """
 import argparse
 import logging
@@ -87,7 +88,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from common.eam_facets_store import EamFacetsStore
-from common.member_eligibility import check_record_eligibility
+from common.member_eligibility import check_cross_table_equality, check_record_eligibility
 from common.member_export_log_store import MemberExportLogStore
 from common.s3_client import S3Client
 from common.sop_store import SOP, SOPStore
@@ -95,7 +96,7 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BUCKET = "fet-to-mms-bucket"
+DEFAULT_BUCKET = "fet-to-mms-bucket-01"
 DEFAULT_WATCH_INTERVAL_SECONDS = 30
 REQUIRED_ACTION = "export_nonmatching_member_hic"  # the action this job implements
 
@@ -147,25 +148,40 @@ def discover_kwd_sops(sop_store: SOPStore) -> List[SOP]:
 
 def parse_pmeme_records(content: str) -> List[Tuple[str, str]]:
     """
-    Extracts (pMEME_HEALTH_ID, raw_line) pairs, one per RECTYPE="MEME" line
-    that carries @pMEME_HEALTH_ID (a file can reference multiple members).
-    The raw line is kept verbatim so it can be forwarded downstream
-    unchanged (see should_forward_to_mms()). Order preserved, duplicate
-    IDs removed (first occurrence wins). Falls back to a single
-    (whole-content, whole-content) pair if no labeled field is found
-    anywhere in the file.
+    Extracts (pMEME_HEALTH_ID, raw_block) pairs. Each entry in a kwd file
+    is one or more preceding lines (typically a single RECTYPE="MEMD"
+    detail line) immediately followed by the RECTYPE="MEME" line that
+    carries @pMEME_HEALTH_ID - the MEME line marks the END of that entry;
+    whatever comes after starts a NEW entry. raw_block is ALL of those
+    lines together (verbatim, in order), not just the bare MEME line, so
+    a forwarded record (see should_forward_to_mms()) has the same shape
+    as a real source entry. If a MEME line has nothing buffered before it
+    (e.g. it's the very first line), raw_block is just that MEME line.
+
+    Order preserved, duplicate IDs removed (first occurrence wins). Falls
+    back to a single (whole-content, whole-content) pair if no labeled
+    field is found anywhere in the file.
     """
     records: List[Tuple[str, str]] = []
     seen = set()
-    for line in content.splitlines():
+    pending_lines: List[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
         match = _FIELD_PATTERN.search(line) or _FIELD_PATTERN_UNQUOTED.search(line)
         if not match:
+            pending_lines.append(line)
             continue
+
         member_id = match.group(1).strip()
+        block = "\n".join(pending_lines + [line])
+        pending_lines = []  # this entry is closed - next lines start a new one
+
         if not member_id or member_id in seen:
             continue
         seen.add(member_id)
-        records.append((member_id, line.strip()))
+        records.append((member_id, block))
 
     if not records:
         stripped = content.strip()
@@ -191,6 +207,28 @@ def _export_once(
         return None
     export_log.record_export(pmeme_health_id, value, source_key=source_key, sop_id=sop_id)
     return value
+
+
+def is_fully_matching(
+    eam_record: dict, facets_record: dict,
+) -> Tuple[bool, List[str], List[str], List[str]]:
+    """
+    Single shared definition of "fully matching", used by BOTH
+    validate_member() (Legacy-export decision) and should_forward_to_mms()
+    (MMS-forward decision) so the two features can never disagree about
+    what counts as a match. A member fully matches only when BOTH:
+      (1) eam and facets each independently pass check_record_eligibility, AND
+      (2) every shared column holds an IDENTICAL value in both tables
+          (common/member_eligibility.py's check_cross_table_equality) -
+          data flows EAM -> Facets, so a disagreement between them is
+          itself a real problem, even if both sides individually pass.
+    Returns (is_match, eam_failed_checks, facets_failed_checks, differing_columns).
+    Assumes both records are non-None - callers check that first.
+    """
+    eam_ok, eam_failed = check_record_eligibility(eam_record)
+    facets_ok, facets_failed = check_record_eligibility(facets_record)
+    identical, differing = check_cross_table_equality(eam_record, facets_record)
+    return (eam_ok and facets_ok and identical), eam_failed, facets_failed, differing
 
 
 def validate_member(
@@ -228,17 +266,19 @@ def validate_member(
         value = facets_record.get("hic") if facets_record else (eam_record.get("mbi") if eam_record else None)
         return _export_once(export_log, pmeme_health_id, value, source_key, sop_id)
 
-    eam_ok, eam_failed = check_record_eligibility(eam_record)
-    facets_ok, facets_failed = check_record_eligibility(facets_record)
+    is_match, eam_failed, facets_failed, differing = is_fully_matching(eam_record, facets_record)
 
-    if eam_ok and facets_ok:
+    if is_match:
         print(f"All matching for pMEME_HEALTH_ID={pmeme_health_id}.")
         return None
 
-    print(
+    message = (
         f"Some condition is not matching for pMEME_HEALTH_ID={pmeme_health_id}: "
-        f"eam_failed_checks={eam_failed}, facets_failed_checks={facets_failed}."
+        f"eam_failed_checks={eam_failed}, facets_failed_checks={facets_failed}"
     )
+    if differing:
+        message += f", differing_columns={differing}"
+    print(message + ".")
     return _export_once(export_log, pmeme_health_id, facets_record.get("hic"), source_key, sop_id)
 
 
@@ -254,9 +294,8 @@ def should_forward_to_mms(eam_record: Optional[dict], facets_record: Optional[di
     """
     if not eam_record or not facets_record:
         return False
-    eam_ok, _ = check_record_eligibility(eam_record)
-    facets_ok, _ = check_record_eligibility(facets_record)
-    if not (eam_ok and facets_ok):
+    is_match, _, _, _ = is_fully_matching(eam_record, facets_record)
+    if not is_match:
         return False
     return not facets_record.get("latest_changes_on_member_pcp", False)
 
@@ -293,7 +332,7 @@ def process_sop(sop: SOP) -> List[str]:
         logger.warning("No kwd files found in s3://%s/%s - nothing to process.", read_bucket, error_prefix)
 
     all_flagged_hics: List[str] = []
-    mms_forward_lines: List[str] = []
+    mms_forward_blocks: List[str] = []
     used_timestamps: Dict[str, int] = {}
     for obj in files:
         key = obj["key"]
@@ -308,7 +347,7 @@ def process_sop(sop: SOP) -> List[str]:
             continue
 
         file_flagged_hics: List[str] = []
-        for pmeme_health_id, raw_line in pmeme_records:
+        for pmeme_health_id, raw_block in pmeme_records:
             eam_record = store.get_eam_by_member_id(pmeme_health_id)
             facets_record = store.get_facets_by_mem_health_id(pmeme_health_id)
 
@@ -317,7 +356,7 @@ def process_sop(sop: SOP) -> List[str]:
                 file_flagged_hics.append(hic)
 
             if sop.mms_bucket and should_forward_to_mms(eam_record, facets_record):
-                mms_forward_lines.append(raw_line)
+                mms_forward_blocks.append(raw_block)
         all_flagged_hics.extend(file_flagged_hics)
 
         if not file_flagged_hics:
@@ -340,15 +379,15 @@ def process_sop(sop: SOP) -> List[str]:
         else:
             logger.error("Failed to write result for '%s' to s3://%s/%s", key, write_bucket, output_key)
 
-    if sop.mms_bucket and mms_forward_lines:
+    if sop.mms_bucket and mms_forward_blocks:
         mms_filename = f"EAF_{datetime.now().strftime('%H%M%S')}.kwd"
         mms_key = f"{sop.mms_input_prefix}{mms_filename}"
-        mms_content = "\n".join(mms_forward_lines) + "\n"
+        mms_content = "\n".join(mms_forward_blocks) + "\n"
         mms_written = s3_client.put_object_text(sop.mms_bucket, mms_key, mms_content)
         if mms_written:
             logger.info(
                 "Forwarded %d fully-matching member(s) with pending PCP changes -> wrote s3://%s/%s",
-                len(mms_forward_lines), sop.mms_bucket, mms_key,
+                len(mms_forward_blocks), sop.mms_bucket, mms_key,
             )
         else:
             logger.error("Failed to write MMS forward file to s3://%s/%s", sop.mms_bucket, mms_key)

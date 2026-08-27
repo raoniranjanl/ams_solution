@@ -45,3 +45,31 @@ def check_record_eligibility(record: Dict, today: Optional[date] = None) -> Tupl
         failed.append("term_date")
 
     return (len(failed) == 0, failed)
+
+
+# Columns eam and facets must hold identical values for, since data flows
+# EAM -> Facets. Deliberately excludes latest_changes_on_member_pcp -
+# that column is facets-only and drives separate MMS-forwarding logic,
+# not a value the two tables are expected to agree on.
+SHARED_COMPARISON_COLUMNS = [
+    "has_active",
+    "planname",
+    "confirmation_letter_went",
+    "member_exist_in_eam",
+    "welcome_kit_triggered",
+    "id_card_triggered",
+    "pcp_letter_went",
+    "effective_date",
+    "term_date",
+]
+
+
+def check_cross_table_equality(eam_record: Dict, facets_record: Dict) -> Tuple[bool, List[str]]:
+    """
+    Returns (is_identical, differing_column_names). Both tables individually
+    passing check_record_eligibility does NOT imply they agree with each
+    other (e.g. eam.planname='MA' vs facets.planname='MAPD' can both be
+    individually valid plan names) - this is a separate check for that.
+    """
+    differing = [c for c in SHARED_COMPARISON_COLUMNS if eam_record.get(c) != facets_record.get(c)]
+    return (len(differing) == 0, differing)

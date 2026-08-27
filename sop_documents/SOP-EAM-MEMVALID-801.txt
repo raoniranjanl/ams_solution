@@ -3,8 +3,8 @@ STANDARD OPERATING PROCEDURE
 SOP ID         : SOP-EAM-MEMVALID-801
 Service        : EAM/Facets Member Validation
 Job            : EAM Member Validation job
-Keyword Bucket : fet-to-mms-bucket (S3, READ - error/ prefix, kwd files in)
-Output Bucket  : eam-fct-eam-bucket (S3, WRITE - input/ prefix, Legacy files out)
+Keyword Bucket : fet-to-mms-bucket-01 (S3, READ - error/ prefix, kwd files in)
+Output Bucket  : eam-fct-eam-bucket-01 (S3, WRITE - input/ prefix, Legacy files out)
 Error          : Member keyword file pending validation
 Risk           : LOW
 Auto-Fix       : YES (fully deterministic, no LLM judgment)
@@ -12,8 +12,8 @@ Auto-Fix       : YES (fully deterministic, no LLM judgment)
 
 OVERVIEW
 --------
-This SOP READS keyword files dropped into s3://fet-to-mms-bucket/error/
-and WRITES its results into a DIFFERENT bucket, s3://eam-fct-eam-bucket/input/.
+This SOP READS keyword files dropped into s3://fet-to-mms-bucket-01/error/
+and WRITES its results into a DIFFERENT bucket, s3://eam-fct-eam-bucket-01/input/.
 Each file names one or more members via a pMEME_HEALTH_ID field. Every
 member must be validated against BOTH the eam and facets Postgres tables.
 
@@ -37,7 +37,7 @@ lines, matching a real extract like:
 ). Only RECTYPE="MEME" lines carry @pMEME_HEALTH_ID - a single file may
 reference multiple members; process every one found.
 
-For every file in s3://fet-to-mms-bucket/error/ (the KEYWORD/READ bucket):
+For every file in s3://fet-to-mms-bucket-01/error/ (the KEYWORD/READ bucket):
   1. Extract every @pMEME_HEALTH_ID="<value>" occurrence from the file.
   2. For each one, look up eam.member_id = pMEME_HEALTH_ID.
   3. Look up facets.mem_health_id = pMEME_HEALTH_ID.
@@ -55,8 +55,8 @@ For every file in s3://fet-to-mms-bucket/error/ (the KEYWORD/READ bucket):
        effective_date <= today <= term_date (not yet termed)
   6. If ANY of these checks fails on EITHER row -> NOT MATCHING. Print a
      console message naming exactly which check(s) failed, AND export the
-     HIC from the facets row - to the OUTPUT bucket (eam-fct-eam-bucket),
-     NOT back into fet-to-mms-bucket.
+     HIC from the facets row - to the OUTPUT bucket (eam-fct-eam-bucket-01),
+     NOT back into fet-to-mms-bucket-01.
   7. If ALL checks pass on BOTH rows -> ALL MATCHING. Print a console
      message only. Export nothing for this member.
 
@@ -88,10 +88,10 @@ STEP 2 — VALIDATE ELIGIBILITY FLAGS AND DATE VALIDITY
      Why     : Member fully matches - print "All matching" and export
                nothing.
 
-OUTPUT (written to eam-fct-eam-bucket, the OUTPUT bucket - not the keyword bucket)
+OUTPUT (written to eam-fct-eam-bucket-01, the OUTPUT bucket - not the keyword bucket)
 -------------------------------------------------------------------------------------
-EACH source kwd file (read from fet-to-mms-bucket/error/) gets its OWN
-output object in eam-fct-eam-bucket/input/, named:
+EACH source kwd file (read from fet-to-mms-bucket-01/error/) gets its OWN
+output object in eam-fct-eam-bucket-01/input/, named:
     Legacy_<YYYYMMDD_HHMMSS>.txt
 (current date and time when that file was processed; "Legacy" is the
 output_filename field - a filename PREFIX, not a full name; if two files
@@ -105,16 +105,19 @@ or, for a single non-matching member:
 If every member in that source file fully matched (or was already
 exported on a previous run), NO output file is written for it at all -
 no 0-byte objects.
-Source keyword files in fet-to-mms-bucket/error/ are not moved or deleted.
+Source keyword files in fet-to-mms-bucket-01/error/ are not moved or deleted.
 
-MMS FORWARDING (SEPARATE FEATURE) - mms_bucket: fet-to-mms-bucket
+MMS FORWARDING (SEPARATE FEATURE) - mms_bucket: fet-to-mms-bucket-01
 -------------------------------------------------------------------
 Independent of the export logic above. Across the WHOLE run (every
 source file combined), any FULLY MATCHING member whose facets row still
-has latest_changes_on_member_pcp = false has their original kwd line
-(verbatim, unchanged) forwarded into ONE new file:
-    s3://fet-to-mms-bucket/input/EAF_<HHMMSS>.kwd
-Note this writes BACK into fet-to-mms-bucket - the SAME bucket kwd files
+has latest_changes_on_member_pcp = false has their original kwd record
+BLOCK forwarded (verbatim, unchanged) into ONE new file. A block is the
+RECTYPE="MEMD" detail line immediately followed by the RECTYPE="MEME"
+line - the MEME line marks the END of that entry, so both lines travel
+together:
+    s3://fet-to-mms-bucket-01/input/EAF_<HHMMSS>.kwd
+Note this writes BACK into fet-to-mms-bucket-01 - the SAME bucket kwd files
 are read from, but the input/ prefix, not error/. Safe: the job only ever
 LISTS the error/ prefix, never input/, so this cannot cause a read/write
 loop. Not written at all if no member qualifies. This does NOT flip
@@ -128,7 +131,7 @@ SUMMARY
                                                      message; no HIC available to export)
   any eligibility/date check fails (either row) -> export_nonmatching_member_hic (auto, console
                                                      message + HIC written to that source file's
-                                                     own Legacy_<timestamp>.txt in eam-fct-eam-bucket)
+                                                     own Legacy_<timestamp>.txt in eam-fct-eam-bucket-01)
   all checks pass on both rows                  -> log_all_matching (auto, console message only,
                                                      nothing exported)
 
