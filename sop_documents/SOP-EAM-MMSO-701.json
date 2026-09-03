@@ -1,20 +1,20 @@
 {
   "sop_id": "SOP-EAM-MMSO-701",
-  "title": "Job Failure - Enrollments MMS job",
+  "title": "Job Failure - Claims MMS job",
   "service": "S3",
   "error_type": "S3_BATCH_JOB_FAILURE",
   "version": "1.0",
-  "job_name": "Enrollments MMS job",
+  "job_name": "Claims MMS job",
   "error_bucket": "eam-mmso-error-bucket-2330",
   "keyword_bucket": "eam-mmso-keyword-bucket-2330",
-  "description": "Standard remediation for the Enrollments MMS job. This job is diagnosed entirely from S3, not CloudWatch: its most recent run log (in the error bucket) records the step number it failed at, and the keyword bucket's error/ folder may hold pending data files. Classifies the failure from BOTH facts before acting - only an early-stage failure (below step 5000) is safe to auto-remediate; anything at or past step 5000 always needs human review.",
+  "description": "Standard remediation for the Claims MMS job. This job is diagnosed entirely from S3, not CloudWatch: its most recent run log (in the error bucket) records the step number it failed at, and the keyword bucket's error/ folder may hold pending data files. Classifies the failure from BOTH facts before acting - only an early-stage failure (below step 5000) is safe to auto-remediate; anything at or past step 5000 always needs human review.",
 
   "match_rule": "Extract the failed step number from the phrase 'Failed at step <N>' (or an equivalent phrasing) in the most recent log file in the error bucket (eam-mmso-error-bucket-2330). Also check whether the keyword bucket's (eam-mmso-keyword-bucket-2330) error/ folder currently contains one or more files. Combine both facts per the decision tree below - this is a deterministic combination of two observed facts, not an independent root-cause diagnosis.",
 
   "example_log_events": [
     {
       "description": "Real error-bucket log file content - step 4000 failure with a pending keyword file (matches the auto-retry rule)",
-      "raw_event": "JOB: Enrollments MMS job\nSTART: 2026-07-08T22:10:00Z\nSTEP 3000: OK\nSTEP 3500: OK\nERROR: Failed at step 4000\nReason: Unable to process keyword file 'enrollment_batch_0417.dat' - validation error.\nEND: 2026-07-08T22:14:12Z",
+      "raw_event": "JOB: Claims MMS job\nSTART: 2026-07-08T22:10:00Z\nSTEP 3000: OK\nSTEP 3500: OK\nERROR: Failed at step 4000\nReason: Unable to process keyword file 'enrollment_batch_0417.dat' - validation error.\nEND: 2026-07-08T22:14:12Z",
       "matched_action": "move_keyword_files_to_input",
       "why": "Step 4000 is below the 5000 threshold, and the keyword bucket's error/ folder contains the file that failed to process - safe to move it back to input/ so the job reprocesses it on its next run."
     }
@@ -23,7 +23,7 @@
   "decision_tree": [
     {
       "step": 1,
-      "name": "Classify the Enrollments MMS job failure by step number and pending keyword files",
+      "name": "Classify the Claims MMS job failure by step number and pending keyword files",
       "instruction": "Read the failed step number from the most recent log file in the error bucket (e.g. 'Failed at step 4000'). Check whether the keyword bucket's error/ folder contains any files. Apply the matching condition below.",
       "conditions": [
         { "if": "failed step is BELOW 5000 (step < 5000) AND one or more files exist in the keyword bucket's error/ folder", "action": "move_keyword_files_to_input", "approval": "auto", "note": "Early-stage failure with pending keyword files - safe to move them back to input/ so the job reprocesses them on its next scheduled run." },

@@ -1,0 +1,86 @@
+==========================================
+STANDARD OPERATING PROCEDURE
+SOP ID   : SOP-GLUE-EAFDL-501
+Service  : AWS Glue (ETL Jobs)
+Job      : enrollments-eaf-dataload-job
+Error    : member api Failure (span_pbp_view undefined)
+Risk     : LOW
+Auto-Fix : NO (always requires human intervention)
+==========================================
+
+OVERVIEW
+--------
+This SOP covers failures of the "enrollments-eaf-dataload-job" AWS Glue
+job. This job depends on the member api / the span_pbp_view
+data view. When that upstream dependency is unavailable, the job fails
+with an error such as "member api Failure: span_pbp_view
+undefined". This is a data-dependency issue, not a transient network or
+capacity blip, so there is no safe automated retry for this signature -
+every match is flagged for a human support analyst to review and
+decide the next step.
+
+RECOMMENDATION
+--------------
+  Do not auto-retry this job. Recommend that a human support analyst
+  confirm the member api / span_pbp_view dependency is healthy
+  (check whether the upstream view exists and is populated) before the
+  job is rerun manually. No automated fix is considered safe for this
+  error signature - it always requires a human support analyst to
+  review the failure and decide the next step.
+
+MATCH RULE — READ THIS CAREFULLY
+---------------------------------
+Read the "Failure Reason" field (or equivalent error/exception text)
+from the job's CloudWatch log event. Check whether it contains the
+literal substring "member api" (case-insensitive), typically
+alongside "span_pbp_view" being reported as undefined, e.g.:
+
+    "member api Failure: span_pbp_view undefined"
+
+Example (real event - MATCHES this SOP):
+    Event   : GlueETLJobExceptionEvent
+    Job     : enrollments-eaf-dataload-job
+    Failure Reason: member api Failure: span_pbp_view undefined
+  -> Failure Reason references the member api and span_pbp_view
+     -> action: manual_review, HUMAN.
+
+STEP 1 — CLASSIFY THE FAILURE
+------------------------------
+
+  A) Failure Reason contains "member api" (case-insensitive)
+     and/or references "span_pbp_view" as undefined
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Upstream member api failure -
+               This is
+               flagged for a human support analyst to review the
+               failure and decide the next step (e.g. confirm the
+               view/API is restored before the job is rerun).
+
+  B) Failure Reason does NOT reference the member api or
+     span_pbp_view (any other error)
+     Action  : manual_review
+     Approval: HUMAN
+     Why     : Not covered by this SOP's specific match rule - fall
+               back to a human support analyst to review and decide.
+
+STEP 2 — NOTIFY
+-----------------
+  In both cases above, this has been flagged as requiring a human
+  support analyst to review and decide - human approval is required,
+  which automatically triggers the standard approve-link email to the
+  on-call/data team.
+  The email must include:
+    - Job name: enrollments-eaf-dataload-job
+    - Run ID
+    - Timestamp
+    - Full Failure Reason text (e.g. "member api Failure:
+      span_pbp_view undefined")
+
+  Escalate to: data-engineering@company.com
+
+SUMMARY
+-------
+  Failure Reason mentions member api / span_pbp_view -> manual_review (human) - approval email sent
+  Any other Failure Reason                                    -> manual_review (human) - approval email sent
+==========================================

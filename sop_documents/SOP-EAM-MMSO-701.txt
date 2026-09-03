@@ -1,18 +1,18 @@
 ==========================================
 STANDARD OPERATING PROCEDURE
 SOP ID         : SOP-EAM-MMSO-701
-Service        : S3 (Enrollments MMS batch job)
-Job            : Enrollments MMS job
+Service        : S3 (Claims MMS job)
+Job            : Claims MMS job
 Error Bucket   : eam-mmso-error-bucket-2330 (job run log files)
 Keyword Bucket : eam-mmso-keyword-bucket-2330 (folders: input/, processed/, error/)
-Error          : Enrollments MMS Job Failed
+Error          : Claims MMS job Failed
 Risk           : LOW
 Auto-Fix       : YES (failures below step 5000 only)
 ==========================================
 
 OVERVIEW
 --------
-This SOP covers failures of the "Enrollments MMS job" specifically. Unlike
+This SOP covers failures of the "Claims MMS job" specifically. Unlike
 other job SOPs in this library, this job is diagnosed entirely from S3, not
 CloudWatch. Its most recent run log (written to the error bucket) records
 the step number it failed at (e.g. "Failed at step 4000"). Before taking
@@ -29,7 +29,7 @@ deterministic combination of two observed facts, not an independent
 diagnosis.
 
 Example (real event, step 4000 - MATCHES the auto-retry rule):
-    JOB: Enrollments MMS job
+    JOB: Claims MMS job
     ERROR: Failed at step 4000
     Reason: Unable to process keyword file 'enrollment_batch_0417.dat' -
             validation error.
